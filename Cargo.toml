@@ -1,12 +1,14 @@
  [workspace]
  resolver = "2"
- members = []
+ members = [
+ "apps/orthanc_ui"
+]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name"]
-license = "MIT OR Apache-2.0"
+edition = "2024"
+authors = ["roberte777 <rewilkes0041@gmail.com>"]
+license = "MIT"
 
 [workspace.dependencies]
 # Shared dependencies with common versions
