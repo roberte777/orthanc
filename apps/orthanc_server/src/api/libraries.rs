@@ -31,6 +31,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/{id}/providers",
             get(list_providers).put(update_provider),
         )
+        .route("/{id}/providers/swap", axum::routing::post(swap_providers))
 }
 
 /// Create default Movies and TV Shows libraries if none exist.
@@ -58,6 +59,25 @@ pub async fn create_default_libraries(db: &crate::db::DbPool) -> Result<(), anyh
         .bind("Default TV show library")
         .execute(db)
         .await?;
+
+        // Add default metadata providers for all new libraries
+        let libs: Vec<(i64,)> = sqlx::query_as("SELECT id FROM libraries")
+            .fetch_all(db)
+            .await?;
+        for (lib_id,) in &libs {
+            sqlx::query(
+                "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'tmdb', 1, 0)",
+            )
+            .bind(lib_id)
+            .execute(db)
+            .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'anidb', 0, 1)",
+            )
+            .bind(lib_id)
+            .execute(db)
+            .await?;
+        }
 
         tracing::info!("Created default Movies and TV Shows libraries");
     }
@@ -197,7 +217,7 @@ async fn create_library(
     .await
     .map_err(anyhow::Error::from)?;
     sqlx::query(
-        "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'anidb', 0, 10)",
+        "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'anidb', 0, 1)",
     )
     .bind(library.id)
     .execute(&state.db)
@@ -381,6 +401,28 @@ async fn scan_library(
         .await
         .map_err(anyhow::Error::from)?;
 
+    // Auto-fetch metadata for any new items
+    if result.added > 0 {
+        if let Some(ref api_key) = state.tmdb_api_key {
+            let db = state.db.clone();
+            let api_key = api_key.clone();
+            let cache_dir = state.image_cache_dir.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::metadata::refresh_library(
+                    &db,
+                    &api_key,
+                    &cache_dir,
+                    id,
+                    crate::metadata::RefreshMode::Standard,
+                )
+                .await
+                {
+                    tracing::warn!("Auto metadata refresh failed for library {}: {}", id, e);
+                }
+            });
+        }
+    }
+
     Ok(Json(result))
 }
 
@@ -479,7 +521,6 @@ async fn list_providers(
 struct UpdateProviderRequest {
     provider: String,
     is_enabled: Option<bool>,
-    priority: Option<i32>,
 }
 
 async fn update_provider(
@@ -489,19 +530,89 @@ async fn update_provider(
     Json(req): Json<UpdateProviderRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     sqlx::query(
-        "INSERT INTO library_metadata_providers (library_id, provider, is_enabled, priority)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(library_id, provider)
-         DO UPDATE SET is_enabled = COALESCE(excluded.is_enabled, is_enabled),
-                       priority = COALESCE(excluded.priority, priority)",
+        "UPDATE library_metadata_providers SET is_enabled = ? WHERE library_id = ? AND provider = ?",
     )
+    .bind(req.is_enabled.unwrap_or(true))
     .bind(id)
     .bind(&req.provider)
-    .bind(req.is_enabled.unwrap_or(true))
-    .bind(req.priority.unwrap_or(0))
     .execute(&state.db)
     .await
     .map_err(anyhow::Error::from)?;
 
     Ok(Json(serde_json::json!({"message": "Provider updated"})))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SwapProvidersRequest {
+    provider_a: String,
+    provider_b: String,
+}
+
+async fn swap_providers(
+    AdminUser(_): AdminUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<SwapProvidersRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Get current priorities
+    let a: Option<(i32,)> = sqlx::query_as(
+        "SELECT priority FROM library_metadata_providers WHERE library_id = ? AND provider = ?",
+    )
+    .bind(id).bind(&req.provider_a)
+    .fetch_optional(&state.db).await.map_err(anyhow::Error::from)?;
+
+    let b: Option<(i32,)> = sqlx::query_as(
+        "SELECT priority FROM library_metadata_providers WHERE library_id = ? AND provider = ?",
+    )
+    .bind(id).bind(&req.provider_b)
+    .fetch_optional(&state.db).await.map_err(anyhow::Error::from)?;
+
+    match (a, b) {
+        (Some((prio_a,)), Some((prio_b,))) => {
+            sqlx::query(
+                "UPDATE library_metadata_providers SET priority = ? WHERE library_id = ? AND provider = ?",
+            )
+            .bind(prio_b).bind(id).bind(&req.provider_a)
+            .execute(&state.db).await.map_err(anyhow::Error::from)?;
+
+            sqlx::query(
+                "UPDATE library_metadata_providers SET priority = ? WHERE library_id = ? AND provider = ?",
+            )
+            .bind(prio_a).bind(id).bind(&req.provider_b)
+            .execute(&state.db).await.map_err(anyhow::Error::from)?;
+        }
+        _ => {
+            return Err(ApiError::NotFound("Provider not found".to_string()));
+        }
+    }
+
+    normalize_provider_priorities(&state.db, id)
+        .await
+        .map_err(anyhow::Error::from)?;
+
+    Ok(Json(serde_json::json!({"message": "Providers swapped"})))
+}
+
+/// Re-sequence provider priorities for a library to 0, 1, 2, ...
+/// Preserves the current relative order.
+async fn normalize_provider_priorities(
+    db: &crate::db::DbPool,
+    library_id: i64,
+) -> Result<(), anyhow::Error> {
+    let providers: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, provider FROM library_metadata_providers WHERE library_id = ? ORDER BY priority, id",
+    )
+    .bind(library_id)
+    .fetch_all(db)
+    .await?;
+
+    for (i, (row_id, _)) in providers.iter().enumerate() {
+        sqlx::query("UPDATE library_metadata_providers SET priority = ? WHERE id = ?")
+            .bind(i as i32)
+            .bind(row_id)
+            .execute(db)
+            .await?;
+    }
+
+    Ok(())
 }

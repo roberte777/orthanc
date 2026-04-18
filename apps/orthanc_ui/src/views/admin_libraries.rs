@@ -597,6 +597,9 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                         let tok = token.clone();
                         let reload = load_providers.clone();
 
+                        let prev_name = if idx > 0 { Some(provider_list[idx - 1].provider.clone()) } else { None };
+                        let next_name = if idx + 1 < total { Some(provider_list[idx + 1].provider.clone()) } else { None };
+
                         rsx! {
                             div { class: "provider-row", key: "{name}",
                                 div { class: "provider-info",
@@ -613,14 +616,18 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                             let name = name.clone();
                                             let tok = tok.clone();
                                             let mut reload = reload.clone();
+                                            let prev_name = prev_name.clone();
                                             move |_| {
                                                 let tok = tok.clone();
                                                 let name = name.clone();
                                                 let mut reload = reload.clone();
-                                                spawn(async move {
-                                                    let _ = api::update_provider(&tok, lib_id, &name, enabled, priority - 1).await;
-                                                    reload();
-                                                });
+                                                if let Some(ref other) = prev_name {
+                                                    let other = other.clone();
+                                                    spawn(async move {
+                                                        let _ = api::swap_providers(&tok, lib_id, &name, &other).await;
+                                                        reload();
+                                                    });
+                                                }
                                             }
                                         },
                                         "\u{25B2}"
@@ -632,14 +639,18 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                             let name = name.clone();
                                             let tok = tok.clone();
                                             let mut reload = reload.clone();
+                                            let next_name = next_name.clone();
                                             move |_| {
                                                 let tok = tok.clone();
                                                 let name = name.clone();
                                                 let mut reload = reload.clone();
-                                                spawn(async move {
-                                                    let _ = api::update_provider(&tok, lib_id, &name, enabled, priority + 1).await;
-                                                    reload();
-                                                });
+                                                if let Some(ref other) = next_name {
+                                                    let other = other.clone();
+                                                    spawn(async move {
+                                                        let _ = api::swap_providers(&tok, lib_id, &name, &other).await;
+                                                        reload();
+                                                    });
+                                                }
                                             }
                                         },
                                         "\u{25BC}"
@@ -658,7 +669,7 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                                     let name = name.clone();
                                                     let mut reload = reload.clone();
                                                     spawn(async move {
-                                                        let _ = api::update_provider(&tok, lib_id, &name, new_enabled, priority).await;
+                                                        let _ = api::update_provider(&tok, lib_id, &name, new_enabled).await;
                                                         reload();
                                                     });
                                                 }

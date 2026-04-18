@@ -1,0 +1,1 @@
+- remove anidb because it is not compatible with how sonarr saves season and episodes

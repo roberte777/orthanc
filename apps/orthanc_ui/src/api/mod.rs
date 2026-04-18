@@ -279,13 +279,20 @@ pub async fn list_providers(token: &str, library_id: i64) -> Result<Vec<Metadata
     get_json(&format!("/api/admin/libraries/{}/providers", library_id), Some(token)).await
 }
 
-pub async fn update_provider(token: &str, library_id: i64, provider: &str, is_enabled: bool, priority: i32) -> Result<serde_json::Value, String> {
+pub async fn update_provider(token: &str, library_id: i64, provider: &str, is_enabled: bool) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({
         "provider": provider,
         "is_enabled": is_enabled,
-        "priority": priority,
     });
     put_json(&format!("/api/admin/libraries/{}/providers", library_id), &body, Some(token)).await
+}
+
+pub async fn swap_providers(token: &str, library_id: i64, provider_a: &str, provider_b: &str) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({
+        "provider_a": provider_a,
+        "provider_b": provider_b,
+    });
+    post_json(&format!("/api/admin/libraries/{}/providers/swap", library_id), &body, Some(token)).await
 }
 
 pub async fn get_setup_status() -> Result<SetupStatus, String> {
