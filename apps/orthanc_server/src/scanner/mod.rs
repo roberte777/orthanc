@@ -25,20 +25,30 @@ const DEFAULT_SCAN_INTERVAL_MINUTES: u64 = 30;
 /// Background loop: scans on startup, then re-checks every minute which libraries
 /// are due for a scan based on their `scan_interval_minutes` and `last_scan_at`.
 /// Also triggers metadata refresh for newly added items when a TMDB API key is available.
-pub async fn background_scan_loop(db: DbPool, tmdb_api_key: Option<String>, image_cache_dir: String) {
+pub async fn background_scan_loop(
+    db: DbPool,
+    tmdb_api_key: Option<String>,
+    tvdb_api_key: String,
+    image_cache_dir: String,
+) {
     // Initial scan on startup
     info!("Running initial library scan");
-    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &image_cache_dir).await;
+    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir).await;
 
     // Then check every 60 seconds which libraries need scanning
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &image_cache_dir).await;
+        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir).await;
     }
 }
 
-async fn scan_all_due_libraries(db: &DbPool, tmdb_api_key: Option<&str>, image_cache_dir: &str) {
+async fn scan_all_due_libraries(
+    db: &DbPool,
+    tmdb_api_key: Option<&str>,
+    tvdb_api_key: &str,
+    image_cache_dir: &str,
+) {
     let libraries = match sqlx::query_as::<_, Library>(
         "SELECT * FROM libraries WHERE is_enabled = 1",
     )
@@ -117,6 +127,7 @@ async fn scan_all_due_libraries(db: &DbPool, tmdb_api_key: Option<&str>, image_c
                 if let Err(e) = crate::metadata::refresh_library(
                     db,
                     api_key,
+                    tvdb_api_key,
                     image_cache_dir,
                     lib.id,
                     crate::metadata::RefreshMode::Standard,

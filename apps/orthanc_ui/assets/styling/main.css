@@ -1117,6 +1117,18 @@ a {
   color: var(--text-muted);
 }
 
+.provider-attribution {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-left: 0.25rem;
+}
+
+.provider-attribution:hover {
+  text-decoration: underline;
+  color: var(--text);
+}
+
 .provider-controls {
   display: flex;
   align-items: center;

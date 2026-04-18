@@ -77,6 +77,12 @@ pub async fn create_default_libraries(db: &crate::db::DbPool) -> Result<(), anyh
             .bind(lib_id)
             .execute(db)
             .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'tvdb', 0, 2)",
+            )
+            .bind(lib_id)
+            .execute(db)
+            .await?;
         }
 
         tracing::info!("Created default Movies and TV Shows libraries");
@@ -208,7 +214,7 @@ async fn create_library(
             .map_err(anyhow::Error::from)?;
     }
 
-    // Add default metadata providers (TMDB enabled, AniDB disabled)
+    // Add default metadata providers (TMDB enabled, AniDB + TVDB disabled)
     sqlx::query(
         "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'tmdb', 1, 0)",
     )
@@ -218,6 +224,13 @@ async fn create_library(
     .map_err(anyhow::Error::from)?;
     sqlx::query(
         "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'anidb', 0, 1)",
+    )
+    .bind(library.id)
+    .execute(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'tvdb', 0, 2)",
     )
     .bind(library.id)
     .execute(&state.db)
@@ -406,11 +419,13 @@ async fn scan_library(
         if let Some(ref api_key) = state.tmdb_api_key {
             let db = state.db.clone();
             let api_key = api_key.clone();
+            let tvdb_key = state.tvdb_api_key.clone();
             let cache_dir = state.image_cache_dir.clone();
             tokio::spawn(async move {
                 if let Err(e) = crate::metadata::refresh_library(
                     &db,
                     &api_key,
+                    &tvdb_key,
                     &cache_dir,
                     id,
                     crate::metadata::RefreshMode::Standard,
