@@ -1,58 +1,57 @@
-# Development
+# orthanc_ui
 
-Your new jumpstart project includes basic organization with an organized `assets` folder and a `components` folder.
-If you chose to develop with the router feature, you will also have a `views` folder.
+Netflix-style web client for Orthanc, built with Dioxus 0.7.
 
-```
-project/
-├─ assets/ # Any assets that are used by the app should be placed here
-├─ src/
-│  ├─ main.rs # The entrypoint for the app. It also defines the routes for the app.
-│  ├─ components/
-│  │  ├─ mod.rs # Defines the components module
-│  │  ├─ hero.rs # The Hero component for use in the home page
-│  │  ├─ echo.rs # The echo component uses server functions to communicate with the server
-│  ├─ views/ # The views each route will render in the app.
-│  │  ├─ mod.rs # Defines the module for the views route and re-exports the components for each route
-│  │  ├─ blog.rs # The component that will render at the /blog/:id route
-│  │  ├─ home.rs # The component that will render at the / route
-├─ Cargo.toml # The Cargo.toml file defines the dependencies and feature flags for your project
+## Configuration
+
+The UI reads `assets/config.json` at startup to determine the server URL. Edit this file to point to your Orthanc server before building or serving:
+
+```json
+{
+  "api_url": "http://localhost:8080"
+}
 ```
 
-### Automatic Tailwind (Dioxus 0.7+)
+The default is `http://localhost:8081`. If the file is missing or malformed, the app will display an error and refuse to load. If the server at the configured URL is unreachable, the login page will show an error.
 
-As of Dioxus 0.7, there no longer is a need to manually install tailwind. Simply `dx serve` and you're good to go!
+> **Note:** The server (`orthanc_server`) defaults to port `8080`. Make sure the port in `config.json` matches `SERVER_ADDR` in your server's `.env`.
 
-Automatic tailwind is supported by checking for a file called `tailwind.css` in your app's manifest directory (next to Cargo.toml). To customize the file, use the dioxus.toml:
-
-```toml
-[application]
-tailwind_input = "my.css"
-tailwind_output = "assets/out.css"
-```
-
-### Tailwind Manual Install
-
-To use tailwind plugins or manually customize tailwind, you can can install the Tailwind CLI and use it directly.
-
-1. Install npm: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
-2. Install the Tailwind CSS CLI: https://tailwindcss.com/docs/installation/tailwind-cli
-3. Run the following command in the root of the project to start the Tailwind CSS compiler:
+## Development
 
 ```bash
-npx @tailwindcss/cli -i ./input.css -o ./assets/tailwind.css --watch
-```
-
-### Serving Your App
-
-Run the following command in the root of your project to start developing with the default platform:
-
-```bash
+# Serve the UI (web)
 dx serve --platform web
+
+# In a separate terminal, run the server
+cargo run -p orthanc_server
 ```
 
-To run for a different platform, use the `--platform platform` flag. E.g.
+## Project structure
+
+```
+assets/
+  config.json          # Server URL configuration
+  styling/main.css     # Global styles
+src/
+  main.rs              # App entry point and route definitions
+  api/mod.rs           # REST API client
+  state.rs             # Global auth state
+  views/               # Route-specific pages
+    login.rs
+    setup.rs           # First-run admin account creation
+    app_shell.rs       # Authenticated layout with navbar
+    home.rs
+    settings.rs
+    admin_users.rs
+    admin_settings.rs
+```
+
+## Building
+
 ```bash
-dx serve --platform desktop
-```
+# Web (WASM)
+dx build --platform web --release
 
+# Desktop
+dx build --platform desktop --release
+```

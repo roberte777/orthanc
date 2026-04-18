@@ -1,0 +1,32 @@
+[package]
+name = "orthanc_server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Application dependencies use anyhow for error handling
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Web framework
+axum.workspace = true
+tower-http.workspace = true
+tower.workspace = true
+
+# Auth & Crypto
+argon2.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+regex.workspace = true

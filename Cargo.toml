@@ -1,6 +1,6 @@
  [workspace]
  resolver = "2"
- members = [
+ members = ["apps/orthanc_server",
  "apps/orthanc_ui"
 ]
 
@@ -25,6 +25,26 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "migrate
 
 # Web framework
 axum = "0.8"
+tower-http = { version = "0.6.8", features = ["cors", "trace"] }
+tower = "0.5.3"
+
+# Auth & Crypto
+argon2 = "0.5.3"
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+rand = "0.10.1"
+sha2 = "0.11.0"
+hex = "0.4.3"
+chrono = { version = "0.4.44", features = ["serde"] }
+getrandom = "0.4.2"
 
 # Dioxus
 dioxus = "0.7"
+
+# HTTP client (WASM compatible)
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+# Regex
+regex = "1.12"
+
+# Web APIs
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
