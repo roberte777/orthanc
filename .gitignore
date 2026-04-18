@@ -31,3 +31,4 @@ Thumbs.db
 .env.local
 
 test_media
+image_cache

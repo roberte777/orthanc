@@ -30,3 +30,6 @@ hex.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
 regex.workspace = true
+reqwest.workspace = true
+quick-xml.workspace = true
+flate2.workspace = true

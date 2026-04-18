@@ -27,6 +27,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/{id}/paths/{path_id}", axum::routing::delete(remove_path))
         .route("/{id}/scan", axum::routing::post(scan_library))
         .route("/{id}/media", get(list_media))
+        .route(
+            "/{id}/providers",
+            get(list_providers).put(update_provider),
+        )
 }
 
 /// Create default Movies and TV Shows libraries if none exist.
@@ -183,6 +187,22 @@ async fn create_library(
             .await
             .map_err(anyhow::Error::from)?;
     }
+
+    // Add default metadata providers (TMDB enabled, AniDB disabled)
+    sqlx::query(
+        "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'tmdb', 1, 0)",
+    )
+    .bind(library.id)
+    .execute(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO library_metadata_providers (library_id, provider, is_enabled, priority) VALUES (?, 'anidb', 0, 10)",
+    )
+    .bind(library.id)
+    .execute(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
 
     let resp = fetch_library_response(&state.db, library)
         .await
@@ -426,4 +446,62 @@ async fn list_media(
     }
 
     Ok(Json(result))
+}
+
+// ── Provider management ──
+
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+struct MetadataProvider {
+    id: i64,
+    library_id: i64,
+    provider: String,
+    is_enabled: bool,
+    priority: i32,
+}
+
+async fn list_providers(
+    AdminUser(_): AdminUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<Vec<MetadataProvider>>> {
+    let providers = sqlx::query_as::<_, MetadataProvider>(
+        "SELECT * FROM library_metadata_providers WHERE library_id = ? ORDER BY priority",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
+
+    Ok(Json(providers))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateProviderRequest {
+    provider: String,
+    is_enabled: Option<bool>,
+    priority: Option<i32>,
+}
+
+async fn update_provider(
+    AdminUser(_): AdminUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    sqlx::query(
+        "INSERT INTO library_metadata_providers (library_id, provider, is_enabled, priority)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(library_id, provider)
+         DO UPDATE SET is_enabled = COALESCE(excluded.is_enabled, is_enabled),
+                       priority = COALESCE(excluded.priority, priority)",
+    )
+    .bind(id)
+    .bind(&req.provider)
+    .bind(req.is_enabled.unwrap_or(true))
+    .bind(req.priority.unwrap_or(0))
+    .execute(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
+
+    Ok(Json(serde_json::json!({"message": "Provider updated"})))
 }

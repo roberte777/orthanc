@@ -126,22 +126,10 @@ pub fn Home() -> Element {
 #[component]
 fn MediaCard(item: MediaItemResponse) -> Element {
     let year = format_year(&item.release_date);
-    let size = format_size(item.file_size_bytes);
-    let fmt = item.container_format.clone().unwrap_or_default().to_uppercase();
     let is_show = item.media_type == "tv_show";
     let id = item.id;
-
-    // Count episodes for TV shows
-    let episode_count: usize = item
-        .children
-        .as_ref()
-        .map(|seasons| {
-            seasons
-                .iter()
-                .map(|s| s.children.as_ref().map(|eps| eps.len()).unwrap_or(0))
-                .sum()
-        })
-        .unwrap_or(0);
+    let has_poster = item.poster_url.is_some();
+    let poster_src = item.poster_url.clone().map(|p| format!("{}{}", crate::api::API_BASE_URL, p));
 
     let route = if is_show {
         crate::Route::ShowDetail { id }
@@ -151,23 +139,22 @@ fn MediaCard(item: MediaItemResponse) -> Element {
 
     rsx! {
         Link { to: route, class: "media-card", key: "{item.id}",
-            div { class: "media-card-content",
-                div { class: "media-card-type",
-                    if is_show { "TV" } else { "MOVIE" }
-                }
-                h3 { class: "media-card-title", "{item.title}" }
-                div { class: "media-card-meta",
-                    if !year.is_empty() {
-                        span { "{year}" }
+            if let Some(ref src) = poster_src {
+                img { src: "{src}", class: "poster-img", alt: "{item.title}" }
+            }
+            if !has_poster {
+                div { class: "media-card-content",
+                    div { class: "media-card-type",
+                        if is_show { "TV" } else { "MOVIE" }
                     }
-                    if !fmt.is_empty() && !is_show {
-                        span { "{fmt}" }
-                    }
-                    if is_show && episode_count > 0 {
-                        span { "{episode_count} ep" }
-                    }
-                    if !size.is_empty() && !is_show {
-                        span { "{size}" }
+                    h3 { class: "media-card-title", "{item.title}" }
+                    div { class: "media-card-meta",
+                        if !year.is_empty() {
+                            span { "{year}" }
+                        }
+                        if let Some(ref rating) = item.rating {
+                            span { "{rating:.1}" }
+                        }
                     }
                 }
             }

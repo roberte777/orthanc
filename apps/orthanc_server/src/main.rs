@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod db;
+mod metadata;
 mod models;
 mod scanner;
 
@@ -30,13 +31,15 @@ async fn main() -> anyhow::Result<()> {
 
     api::libraries::create_default_libraries(&pool).await?;
 
+    let state = Arc::new(api::AppState::from_env(pool.clone()));
+
     // Spawn background scanner that runs on an interval
     let scan_pool = pool.clone();
+    let scan_api_key = state.tmdb_api_key.clone();
+    let scan_cache_dir = state.image_cache_dir.clone();
     tokio::spawn(async move {
-        scanner::background_scan_loop(scan_pool).await;
+        scanner::background_scan_loop(scan_pool, scan_api_key, scan_cache_dir).await;
     });
-
-    let state = Arc::new(api::AppState::from_env(pool.clone()));
 
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)

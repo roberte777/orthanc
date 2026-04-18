@@ -7,6 +7,7 @@ pub mod state;
 pub mod auth;
 pub mod libraries;
 pub mod media;
+pub mod metadata_api;
 pub mod settings;
 pub mod users;
 
@@ -21,8 +22,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .nest("/api/settings", settings::user_router())
         .nest("/api/admin/settings", settings::admin_router())
         .nest("/api/admin/libraries", libraries::router())
+        .nest("/api/admin/metadata", metadata_api::router())
         .nest("/api/media", media::router())
-        .with_state(state)
+        .with_state(state.clone())
+        .nest_service(
+            "/api/images",
+            tower_http::services::ServeDir::new(&state.image_cache_dir),
+        )
 }
 
 async fn health(

@@ -1082,6 +1082,69 @@ a {
   font-size: 0.85rem !important;
 }
 
+/* ── Provider Config ── */
+.library-providers {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.provider-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.provider-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.provider-name.provider-disabled {
+  color: var(--text-muted);
+}
+
+.provider-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.provider-arrow {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 2px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.provider-arrow:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255,255,255,0.08);
+}
+
+.provider-arrow:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+
 /* ── Row Header (title + see all) ── */
 .row-header {
   display: flex;
@@ -1195,6 +1258,7 @@ a {
 /* ── Detail Page ── */
 .detail-page {
   min-height: 100vh;
+  position: relative;
 }
 
 .detail-backdrop {
@@ -1202,34 +1266,47 @@ a {
   top: 0;
   left: 0;
   right: 0;
-  height: 50vh;
+  height: 70vh;
+  min-height: 480px;
   background: linear-gradient(135deg, #1a0a0a 0%, #141414 50%, #0a1020 100%);
   z-index: 0;
+  overflow: hidden;
 }
 
 .detail-backdrop::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, transparent 40%, var(--bg) 100%);
+  background:
+    linear-gradient(to bottom, rgba(20,20,20,0.4) 0%, rgba(20,20,20,0.6) 50%, var(--bg) 100%),
+    linear-gradient(to right, var(--bg) 0%, rgba(20,20,20,0.7) 30%, transparent 60%);
+  z-index: 1;
+}
+
+.detail-backdrop-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  opacity: 0.7;
 }
 
 .detail-content {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
-  gap: 2rem;
-  padding: calc(var(--navbar-height) + 4rem) 4% 2rem;
+  gap: 2.5rem;
+  padding: calc(var(--navbar-height) + 5rem) 4% 2rem;
   max-width: 1200px;
   margin: 0 auto;
 }
 
 .detail-poster-placeholder {
   flex-shrink: 0;
-  width: 200px;
+  width: 280px;
   aspect-ratio: 2/3;
   background: linear-gradient(145deg, #1f1f1f, #2a2a2a);
-  border-radius: 4px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1245,34 +1322,50 @@ a {
 
 .detail-info {
   flex: 1;
-  padding-top: 1rem;
+  padding-top: 0.5rem;
+  min-width: 0;
 }
 
 .detail-title {
-  font-size: 2.5rem;
+  font-size: 2.8rem;
   font-weight: 800;
-  line-height: 1.15;
-  margin-bottom: 1rem;
+  line-height: 1.1;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.7);
 }
 
 .detail-meta-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .detail-meta-tag {
   font-size: 0.8rem;
   color: var(--text-secondary);
-  background: rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.1);
   padding: 4px 10px;
   border-radius: 2px;
   font-weight: 500;
+  backdrop-filter: blur(4px);
 }
 
 .detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin-bottom: 1.5rem;
+}
+
+.detail-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255,255,255,0.08);
 }
 
 .detail-file-path {
@@ -1349,58 +1442,232 @@ a {
   flex-direction: column;
 }
 
-.episode-row {
+/* ── Netflix-style Episode Cards ── */
+.ep-card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 1rem;
   padding: 1rem 0;
   border-bottom: 1px solid rgba(51, 51, 51, 0.4);
+  cursor: pointer;
+  border-radius: 4px;
   transition: background 0.15s;
 }
 
-.episode-row:hover {
-  background: rgba(255,255,255,0.02);
+.ep-card:hover {
+  background: rgba(255,255,255,0.04);
 }
 
-.episode-row:last-child {
+.ep-card:last-child {
   border-bottom: none;
 }
 
-.episode-number {
-  font-size: 1.2rem;
-  font-weight: 700;
+.ep-card-num {
+  font-size: 1.5rem;
+  font-weight: 600;
   color: var(--text-muted);
   min-width: 2.5rem;
   text-align: center;
   flex-shrink: 0;
+  padding-top: 0.8rem;
 }
 
-.episode-info {
+.ep-card-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 175px;
+  aspect-ratio: 16/9;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #1a1a1a;
+}
+
+.ep-card-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ep-card-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #1a1a1a, #252525);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ep-card-thumb-ep {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.08);
+  letter-spacing: 0.05em;
+}
+
+.ep-card-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  background: rgba(0,0,0,0.4);
+  transition: opacity 0.15s;
+}
+
+.ep-card:hover .ep-card-play-overlay {
+  opacity: 1;
+}
+
+.ep-card-play-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid white;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ep-card-play-icon::after {
+  content: "";
+  display: block;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 8px 0 8px 14px;
+  border-color: transparent transparent transparent white;
+  margin-left: 3px;
+}
+
+.ep-card-body {
   flex: 1;
   min-width: 0;
+  padding-top: 0.2rem;
 }
 
-.episode-title {
+.ep-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.ep-card-title {
   font-size: 0.95rem;
   font-weight: 600;
-  margin-bottom: 0.2rem;
-}
-
-.episode-file {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.episode-meta {
-  display: flex;
-  gap: 0.4rem;
+.ep-card-runtime {
+  font-size: 0.8rem;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
-.episode-actions {
-  flex-shrink: 0;
+.ep-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
+
+/* ── Poster Images ── */
+.poster-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.detail-poster-img {
+  flex-shrink: 0;
+  width: 280px;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+}
+
+/* ── Detail Metadata ── */
+.detail-tagline {
+  font-size: 1.05rem;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+}
+
+.detail-description {
+  font-size: 0.95rem;
+  color: #d4d4d4;
+  line-height: 1.65;
+  margin-bottom: 1.25rem;
+  max-width: 600px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+
+.detail-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.genre-tag {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 3px 12px;
+  border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+
+.detail-rating-badge {
+  border: 1px solid rgba(255,255,255,0.4);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.detail-score {
+  background: rgba(70, 211, 105, 0.2);
+  color: var(--success);
+  font-weight: 700;
+}
+
+/* ── Admin Refresh Button Styles ── */
+.btn-admin-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 6px 14px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: all 0.15s;
+}
+
+.btn-admin-refresh:hover {
+  background: rgba(255,255,255,0.14);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.refresh-status {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: 0.25rem;
+}
+
+/* (episode styles are in the ep-card section above) */

@@ -24,20 +24,21 @@ const DEFAULT_SCAN_INTERVAL_MINUTES: u64 = 30;
 
 /// Background loop: scans on startup, then re-checks every minute which libraries
 /// are due for a scan based on their `scan_interval_minutes` and `last_scan_at`.
-pub async fn background_scan_loop(db: DbPool) {
+/// Also triggers metadata refresh for newly added items when a TMDB API key is available.
+pub async fn background_scan_loop(db: DbPool, tmdb_api_key: Option<String>, image_cache_dir: String) {
     // Initial scan on startup
     info!("Running initial library scan");
-    scan_all_due_libraries(&db).await;
+    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &image_cache_dir).await;
 
     // Then check every 60 seconds which libraries need scanning
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        scan_all_due_libraries(&db).await;
+        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &image_cache_dir).await;
     }
 }
 
-async fn scan_all_due_libraries(db: &DbPool) {
+async fn scan_all_due_libraries(db: &DbPool, tmdb_api_key: Option<&str>, image_cache_dir: &str) {
     let libraries = match sqlx::query_as::<_, Library>(
         "SELECT * FROM libraries WHERE is_enabled = 1",
     )
@@ -96,6 +97,34 @@ async fn scan_all_due_libraries(db: &DbPool) {
             }
             Err(e) => {
                 warn!("Background scan failed for '{}': {}", lib.name, e);
+            }
+        }
+
+        // Always try metadata refresh if we have an API key — standard mode
+        // only fills missing fields so it's cheap for already-enriched items.
+        if let Some(api_key) = tmdb_api_key {
+            // Check if any top-level items are missing metadata
+            let (unscanned,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM media_items WHERE library_id = ? AND media_type IN ('movie', 'tv_show') AND tmdb_id IS NULL",
+            )
+            .bind(lib.id)
+            .fetch_one(db)
+            .await
+            .unwrap_or((0,));
+
+            if unscanned > 0 {
+                info!("Refreshing metadata for {} unscanned items in '{}'", unscanned, lib.name);
+                if let Err(e) = crate::metadata::refresh_library(
+                    db,
+                    api_key,
+                    image_cache_dir,
+                    lib.id,
+                    crate::metadata::RefreshMode::Standard,
+                )
+                .await
+                {
+                    warn!("Metadata refresh failed for '{}': {}", lib.name, e);
+                }
             }
         }
     }

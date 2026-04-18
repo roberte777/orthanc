@@ -2,7 +2,8 @@
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-const API_BASE: &str = "http://localhost:8081";
+pub const API_BASE_URL: &str = "http://localhost:8081";
+const API_BASE: &str = API_BASE_URL;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserResponse {
@@ -187,14 +188,22 @@ pub struct MediaItemResponse {
     pub sort_title: Option<String>,
     pub description: Option<String>,
     pub release_date: Option<String>,
+    pub duration_seconds: Option<i32>,
     pub file_path: Option<String>,
     pub file_size_bytes: Option<i64>,
     pub container_format: Option<String>,
+    pub rating: Option<f64>,
+    pub content_rating: Option<String>,
+    pub tagline: Option<String>,
+    pub tmdb_id: Option<String>,
     pub parent_id: Option<i64>,
     pub season_number: Option<i32>,
     pub episode_number: Option<i32>,
     pub date_added: String,
     pub date_modified: Option<String>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub genres: Option<Vec<String>>,
     pub children: Option<Vec<MediaItemResponse>>,
 }
 
@@ -229,6 +238,54 @@ pub async fn get_all_shows(token: &str) -> Result<Vec<MediaItemResponse>, String
 
 pub async fn get_show(token: &str, id: i64) -> Result<MediaItemResponse, String> {
     get_json(&format!("/api/media/shows/{}", id), Some(token)).await
+}
+
+pub async fn refresh_metadata(token: &str, id: i64, mode: &str) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({"mode": mode});
+    post_json(&format!("/api/admin/metadata/refresh/{}", id), &body, Some(token)).await
+}
+
+pub async fn refresh_library_metadata(token: &str, id: i64, mode: &str) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({"mode": mode});
+    post_json(&format!("/api/admin/metadata/refresh-library/{}", id), &body, Some(token)).await
+}
+
+#[derive(Debug, Serialize)]
+pub struct MetadataOverride {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub rating: Option<f64>,
+    pub content_rating: Option<String>,
+    pub tagline: Option<String>,
+    pub release_date: Option<String>,
+}
+
+pub async fn override_metadata(token: &str, id: i64, req: MetadataOverride) -> Result<serde_json::Value, String> {
+    put_json(&format!("/api/admin/metadata/override/{}", id), &req, Some(token)).await
+}
+
+// ── Metadata Providers ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetadataProviderResponse {
+    pub id: i64,
+    pub library_id: i64,
+    pub provider: String,
+    pub is_enabled: bool,
+    pub priority: i32,
+}
+
+pub async fn list_providers(token: &str, library_id: i64) -> Result<Vec<MetadataProviderResponse>, String> {
+    get_json(&format!("/api/admin/libraries/{}/providers", library_id), Some(token)).await
+}
+
+pub async fn update_provider(token: &str, library_id: i64, provider: &str, is_enabled: bool, priority: i32) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({
+        "provider": provider,
+        "is_enabled": is_enabled,
+        "priority": priority,
+    });
+    put_json(&format!("/api/admin/libraries/{}/providers", library_id), &body, Some(token)).await
 }
 
 pub async fn get_setup_status() -> Result<SetupStatus, String> {

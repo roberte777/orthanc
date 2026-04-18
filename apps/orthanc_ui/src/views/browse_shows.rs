@@ -19,6 +19,16 @@ fn format_year(release_date: &Option<String>) -> String {
         .to_string()
 }
 
+fn format_runtime(seconds: Option<i32>) -> String {
+    match seconds {
+        Some(s) if s > 0 => {
+            let m = s / 60;
+            format!("{}m", m)
+        }
+        _ => String::new(),
+    }
+}
+
 fn count_episodes(show: &MediaItemResponse) -> usize {
     show.children
         .as_ref()
@@ -29,6 +39,10 @@ fn count_episodes(show: &MediaItemResponse) -> usize {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+fn api_base() -> String {
+    crate::api::API_BASE_URL.to_string()
 }
 
 #[component]
@@ -73,14 +87,21 @@ pub fn BrowseShows() -> Element {
 fn ShowGridCard(item: MediaItemResponse) -> Element {
     let year = format_year(&item.release_date);
     let id = item.id;
+    let has_poster = item.poster_url.is_some();
+    let poster_src = item.poster_url.clone().map(|p| format!("{}{}", api_base(), p));
 
     rsx! {
         Link {
             to: crate::Route::ShowDetail { id },
             class: "media-grid-card",
-            div { class: "media-grid-card-poster show-poster",
-                div { class: "media-grid-card-overlay",
-                    span { class: "media-grid-card-type", "TV" }
+            div { class: if has_poster { "media-grid-card-poster" } else { "media-grid-card-poster show-poster" },
+                if let Some(ref src) = poster_src {
+                    img { src: "{src}", class: "poster-img", alt: "{item.title}" }
+                }
+                if !has_poster {
+                    div { class: "media-grid-card-overlay",
+                        span { class: "media-grid-card-type", "TV" }
+                    }
                 }
             }
             div { class: "media-grid-card-info",
@@ -88,6 +109,9 @@ fn ShowGridCard(item: MediaItemResponse) -> Element {
                 div { class: "media-grid-card-meta",
                     if !year.is_empty() {
                         span { "{year}" }
+                    }
+                    if let Some(ref rating) = item.rating {
+                        span { "{rating:.1}" }
                     }
                 }
             }
@@ -98,30 +122,40 @@ fn ShowGridCard(item: MediaItemResponse) -> Element {
 #[component]
 pub fn ShowDetail(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
+    let is_admin = auth.read().is_admin();
     let mut show = use_signal(|| Option::<MediaItemResponse>::None);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| Option::<String>::None);
     let mut active_season = use_signal(|| 0usize);
+    let mut refresh_msg = use_signal(|| Option::<String>::None);
 
-    use_effect(move || {
+    let mut cache_bust = use_signal(|| 0u32);
+
+    let mut load_count = use_signal(|| 0u32);
+
+    let load_show = move || {
         let token = auth.read().access_token.clone().unwrap_or_default();
         spawn(async move {
             match api::get_show(&token, id).await {
-                Ok(s) => show.set(Some(s)),
+                Ok(s) => {
+                    show.set(Some(s));
+                    load_count += 1;
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
         });
-    });
+    };
+
+    let mut initial_load = load_show.clone();
+    use_effect(move || { initial_load(); });
 
     if loading() {
         return rsx! { div { class: "page", div { class: "loading", "Loading..." } } };
     }
-
     if let Some(err) = error() {
         return rsx! { div { class: "page", div { class: "error-msg", "{err}" } } };
     }
-
     let s = match show() {
         Some(s) => s,
         None => return rsx! { div { class: "page", "Show not found" } },
@@ -131,6 +165,9 @@ pub fn ShowDetail(id: i64) -> Element {
     let seasons = s.children.clone().unwrap_or_default();
     let season_count = seasons.len();
     let episode_count = count_episodes(&s);
+    let cb = load_count();
+    let backdrop_src = s.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
+    let poster_src = s.poster_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
 
     let current_season = seasons.get(active_season()).cloned();
     let episodes = current_season
@@ -139,16 +176,33 @@ pub fn ShowDetail(id: i64) -> Element {
 
     rsx! {
         div { class: "detail-page",
-            div { class: "detail-backdrop" }
+            div { class: "detail-backdrop",
+                if let Some(ref src) = backdrop_src {
+                    img { src: "{src}", class: "detail-backdrop-img", alt: "" }
+                }
+            }
             div { class: "detail-content",
-                div { class: "detail-poster-placeholder show-poster-detail",
-                    span { "TV" }
+                if let Some(ref src) = poster_src {
+                    img { src: "{src}", class: "detail-poster-img", alt: "{s.title}" }
+                } else {
+                    div { class: "detail-poster-placeholder show-poster-detail",
+                        span { "TV" }
+                    }
                 }
                 div { class: "detail-info",
                     h1 { class: "detail-title", "{s.title}" }
+                    if let Some(ref tagline) = s.tagline {
+                        p { class: "detail-tagline", "{tagline}" }
+                    }
                     div { class: "detail-meta-row",
                         if !year.is_empty() {
                             span { class: "detail-meta-tag", "{year}" }
+                        }
+                        if let Some(ref cr) = s.content_rating {
+                            span { class: "detail-meta-tag detail-rating-badge", "{cr}" }
+                        }
+                        if let Some(ref rating) = s.rating {
+                            span { class: "detail-meta-tag detail-score", "{rating:.1}" }
                         }
                         {
                             let label = if season_count != 1 { "Seasons" } else { "Season" };
@@ -159,13 +213,73 @@ pub fn ShowDetail(id: i64) -> Element {
                             rsx! { span { class: "detail-meta-tag", "{episode_count} {label}" } }
                         }
                     }
+                    if let Some(ref genres) = s.genres {
+                        div { class: "detail-genres",
+                            for g in genres {
+                                span { class: "genre-tag", "{g}" }
+                            }
+                        }
+                    }
+                    if let Some(ref desc) = s.description {
+                        p { class: "detail-description", "{desc}" }
+                    }
+                    div { class: "detail-actions",
+                        button { class: "btn-play", disabled: true, "Play" }
+                    }
+                    if is_admin {
+                        div { class: "detail-admin-actions",
+                            {
+                                let mut reload = load_show.clone();
+                                rsx! {
+                                    button {
+                                        class: "btn-admin-refresh",
+                                        onclick: move |_| {
+                                            let token = auth.read().access_token.clone().unwrap_or_default();
+                                            let mut reload2 = reload.clone();
+                                            refresh_msg.set(Some("Refreshing...".to_string()));
+                                            spawn(async move {
+                                                match api::refresh_metadata(&token, id, "standard").await {
+                                                    Ok(_) => {
+                                                        refresh_msg.set(Some("Metadata refreshed".to_string()));
+                                                        reload2();
+                                                    }
+                                                    Err(e) => refresh_msg.set(Some(format!("Error: {}", e))),
+                                                }
+                                            });
+                                        },
+                                        "Refresh Metadata"
+                                    }
+                                    button {
+                                        class: "btn-admin-refresh",
+                                        onclick: move |_| {
+                                            let token = auth.read().access_token.clone().unwrap_or_default();
+                                            let mut reload2 = reload.clone();
+                                            refresh_msg.set(Some("Full refresh...".to_string()));
+                                            spawn(async move {
+                                                match api::refresh_metadata(&token, id, "full").await {
+                                                    Ok(_) => {
+                                                        refresh_msg.set(Some("Full refresh done".to_string()));
+                                                        reload2();
+                                                    }
+                                                    Err(e) => refresh_msg.set(Some(format!("Error: {}", e))),
+                                                }
+                                            });
+                                        },
+                                        "Replace All Metadata"
+                                    }
+                                    if let Some(msg) = refresh_msg() {
+                                        span { class: "refresh-status", "{msg}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             // Season tabs + episode list
             if !seasons.is_empty() {
                 div { class: "show-seasons",
-                    // Season tabs
                     div { class: "season-tabs",
                         for (idx, season) in seasons.iter().enumerate() {
                             {
@@ -180,11 +294,9 @@ pub fn ShowDetail(id: i64) -> Element {
                             }
                         }
                     }
-
-                    // Episodes list
                     div { class: "episode-list",
                         for ep in &episodes {
-                            EpisodeRow { episode: ep.clone() }
+                            EpisodeRow { episode: ep.clone(), cache_bust: cb }
                         }
                     }
                 }
@@ -194,34 +306,40 @@ pub fn ShowDetail(id: i64) -> Element {
 }
 
 #[component]
-fn EpisodeRow(episode: MediaItemResponse) -> Element {
+fn EpisodeRow(episode: MediaItemResponse, cache_bust: u32) -> Element {
     let ep_num = episode.episode_number.unwrap_or(0);
-    let size = format_size(episode.file_size_bytes);
-    let fmt = episode.container_format.clone().unwrap_or_default().to_uppercase();
-    let file_path = episode.file_path.clone().unwrap_or_default();
-    let file_name = std::path::Path::new(&file_path)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("")
-        .to_string();
+    let runtime = format_runtime(episode.duration_seconds);
+    let thumb_src = episode.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cache_bust));
+    let has_thumb = thumb_src.is_some();
 
     rsx! {
-        div { class: "episode-row",
-            div { class: "episode-number", "{ep_num}" }
-            div { class: "episode-info",
-                h4 { class: "episode-title", "{episode.title}" }
-                p { class: "episode-file", "{file_name}" }
-            }
-            div { class: "episode-meta",
-                if !fmt.is_empty() {
-                    span { class: "detail-meta-tag", "{fmt}" }
+        div { class: "ep-card",
+            // Left: number
+            div { class: "ep-card-num", "{ep_num}" }
+            // Thumbnail
+            div { class: "ep-card-thumb",
+                if let Some(ref src) = thumb_src {
+                    img { src: "{src}", class: "ep-card-thumb-img", alt: "{episode.title}" }
+                } else {
+                    div { class: "ep-card-thumb-placeholder",
+                        span { class: "ep-card-thumb-ep", "E{ep_num}" }
+                    }
                 }
-                if !size.is_empty() {
-                    span { class: "detail-meta-tag", "{size}" }
+                div { class: "ep-card-play-overlay",
+                    div { class: "ep-card-play-icon" }
                 }
             }
-            div { class: "episode-actions",
-                button { class: "btn btn-sm btn-secondary", disabled: true, "Play" }
+            // Info
+            div { class: "ep-card-body",
+                div { class: "ep-card-header",
+                    h4 { class: "ep-card-title", "{episode.title}" }
+                    if !runtime.is_empty() {
+                        span { class: "ep-card-runtime", "{runtime}" }
+                    }
+                }
+                if let Some(ref desc) = episode.description {
+                    p { class: "ep-card-desc", "{desc}" }
+                }
             }
         }
     }

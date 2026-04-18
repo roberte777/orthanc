@@ -144,6 +144,8 @@ pub fn AdminLibraries() -> Element {
                                         // Add path input
                                         AddPathInput { token: tok.clone(), library_id: lib_id, on_added: move |_| reload_path() }
                                     }
+                                    // Metadata providers
+                                    ProviderConfig { token: tok.clone(), library_id: lib_id }
                                 }
                             }
                         }
@@ -535,6 +537,140 @@ fn ScanButton(props: ScanButtonProps) -> Element {
             span {
                 class: if ok { "scan-result-ok" } else { "scan-result-err" },
                 "{msg}"
+            }
+        }
+    }
+}
+
+// ── Provider Config ──
+
+#[derive(Props, Clone, PartialEq)]
+struct ProviderConfigProps {
+    token: String,
+    library_id: i64,
+}
+
+#[component]
+fn ProviderConfig(props: ProviderConfigProps) -> Element {
+    let mut providers = use_signal(Vec::<api::MetadataProviderResponse>::new);
+    let mut loaded = use_signal(|| false);
+
+    let token = props.token.clone();
+    let lib_id = props.library_id;
+
+    let load_providers = {
+        let tok = token.clone();
+        move || {
+            let tok = tok.clone();
+            spawn(async move {
+                if let Ok(p) = api::list_providers(&tok, lib_id).await {
+                    providers.set(p);
+                }
+                loaded.set(true);
+            });
+        }
+    };
+
+    let mut initial_load = load_providers.clone();
+    use_effect(move || { initial_load(); });
+
+    let provider_list = providers();
+
+    let total = provider_list.len();
+
+    rsx! {
+        div { class: "library-providers",
+            h4 { class: "library-paths-title", "Metadata Providers" }
+            div { class: "provider-list",
+                for (idx, prov) in provider_list.iter().enumerate() {
+                    {
+                        let name = prov.provider.clone();
+                        let display_name = match name.as_str() {
+                            "tmdb" => "TMDB".to_string(),
+                            "anidb" => "AniDB".to_string(),
+                            _ => name.clone(),
+                        };
+                        let enabled = prov.is_enabled;
+                        let priority = prov.priority;
+                        let is_first = idx == 0;
+                        let is_last = idx == total - 1;
+                        let tok = token.clone();
+                        let reload = load_providers.clone();
+
+                        rsx! {
+                            div { class: "provider-row", key: "{name}",
+                                div { class: "provider-info",
+                                    span {
+                                        class: if enabled { "provider-name" } else { "provider-name provider-disabled" },
+                                        "{display_name}"
+                                    }
+                                }
+                                div { class: "provider-controls",
+                                    button {
+                                        class: "provider-arrow",
+                                        disabled: is_first,
+                                        onclick: {
+                                            let name = name.clone();
+                                            let tok = tok.clone();
+                                            let mut reload = reload.clone();
+                                            move |_| {
+                                                let tok = tok.clone();
+                                                let name = name.clone();
+                                                let mut reload = reload.clone();
+                                                spawn(async move {
+                                                    let _ = api::update_provider(&tok, lib_id, &name, enabled, priority - 1).await;
+                                                    reload();
+                                                });
+                                            }
+                                        },
+                                        "\u{25B2}"
+                                    }
+                                    button {
+                                        class: "provider-arrow",
+                                        disabled: is_last,
+                                        onclick: {
+                                            let name = name.clone();
+                                            let tok = tok.clone();
+                                            let mut reload = reload.clone();
+                                            move |_| {
+                                                let tok = tok.clone();
+                                                let name = name.clone();
+                                                let mut reload = reload.clone();
+                                                spawn(async move {
+                                                    let _ = api::update_provider(&tok, lib_id, &name, enabled, priority + 1).await;
+                                                    reload();
+                                                });
+                                            }
+                                        },
+                                        "\u{25BC}"
+                                    }
+                                    label { class: "toggle",
+                                        input {
+                                            r#type: "checkbox",
+                                            checked: enabled,
+                                            onchange: {
+                                                let name = name.clone();
+                                                let tok = tok.clone();
+                                                let mut reload = reload.clone();
+                                                move |e: Event<FormData>| {
+                                                    let new_enabled = e.checked();
+                                                    let tok = tok.clone();
+                                                    let name = name.clone();
+                                                    let mut reload = reload.clone();
+                                                    spawn(async move {
+                                                        let _ = api::update_provider(&tok, lib_id, &name, new_enabled, priority).await;
+                                                        reload();
+                                                    });
+                                                }
+                                            },
+                                        }
+                                        span { class: "toggle-slider" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
