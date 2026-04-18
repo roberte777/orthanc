@@ -36,9 +36,10 @@ async fn main() -> anyhow::Result<()> {
     // Spawn background scanner that runs on an interval
     let scan_pool = pool.clone();
     let scan_api_key = state.tmdb_api_key.clone();
+    let scan_tvdb_key = state.tvdb_api_key.clone();
     let scan_cache_dir = state.image_cache_dir.clone();
     tokio::spawn(async move {
-        scanner::background_scan_loop(scan_pool, scan_api_key, scan_cache_dir).await;
+        scanner::background_scan_loop(scan_pool, scan_api_key, scan_tvdb_key, scan_cache_dir).await;
     });
 
     let cors = tower_http::cors::CorsLayer::new()

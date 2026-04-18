@@ -55,9 +55,16 @@ async fn refresh_item(
         .as_ref()
         .ok_or(ApiError::BadRequest("TMDB_API_KEY not configured".to_string()))?;
 
-    metadata::refresh_item(&state.db, api_key, &state.image_cache_dir, id, req.mode.into())
-        .await
-        .map_err(|e| ApiError::Internal(e))?;
+    metadata::refresh_item(
+        &state.db,
+        api_key,
+        &state.tvdb_api_key,
+        &state.image_cache_dir,
+        id,
+        req.mode.into(),
+    )
+    .await
+    .map_err(|e| ApiError::Internal(e))?;
 
     Ok(Json(serde_json::json!({"message": "Metadata refreshed"})))
 }
@@ -76,6 +83,7 @@ async fn refresh_library(
     let result = metadata::refresh_library(
         &state.db,
         api_key,
+        &state.tvdb_api_key,
         &state.image_cache_dir,
         id,
         req.mode.into(),

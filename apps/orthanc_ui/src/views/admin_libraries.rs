@@ -588,6 +588,7 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                         let display_name = match name.as_str() {
                             "tmdb" => "TMDB".to_string(),
                             "anidb" => "AniDB".to_string(),
+                            "tvdb" => "TheTVDB".to_string(),
                             _ => name.clone(),
                         };
                         let enabled = prov.is_enabled;
@@ -600,12 +601,26 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                         let prev_name = if idx > 0 { Some(provider_list[idx - 1].provider.clone()) } else { None };
                         let next_name = if idx + 1 < total { Some(provider_list[idx + 1].provider.clone()) } else { None };
 
+                        let attribution = match name.as_str() {
+                            "tvdb" => Some(("Metadata provided by TheTVDB.", "https://thetvdb.com")),
+                            _ => None,
+                        };
+
                         rsx! {
                             div { class: "provider-row", key: "{name}",
                                 div { class: "provider-info",
                                     span {
                                         class: if enabled { "provider-name" } else { "provider-name provider-disabled" },
                                         "{display_name}"
+                                    }
+                                    if let Some((text, href)) = attribution {
+                                        a {
+                                            class: "provider-attribution",
+                                            href: "{href}",
+                                            target: "_blank",
+                                            rel: "noopener noreferrer",
+                                            "{text}"
+                                        }
                                     }
                                 }
                                 div { class: "provider-controls",

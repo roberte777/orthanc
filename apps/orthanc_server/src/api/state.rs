@@ -6,6 +6,7 @@ pub struct AppState {
     pub access_token_expiry: u64,  // seconds
     pub refresh_token_expiry: u64, // seconds
     pub tmdb_api_key: Option<String>,
+    pub tvdb_api_key: String,
     pub image_cache_dir: String,
 }
 
@@ -28,6 +29,13 @@ impl AppState {
             std::env::var("TMDB_API_KEY").unwrap_or_else(|_| DEFAULT_TMDB_API_KEY.to_string()),
         );
 
+        // Embedded TVDB project API key (like Jellyfin's TvdbPlugin). Users may
+        // override with their own subscriber key via TVDB_API_KEY.
+        const DEFAULT_TVDB_API_KEY: &str = "91090b09-8411-4b64-834a-733ab3f12a07";
+
+        let tvdb_api_key =
+            std::env::var("TVDB_API_KEY").unwrap_or_else(|_| DEFAULT_TVDB_API_KEY.to_string());
+
         let image_cache_dir = std::env::var("IMAGE_CACHE_DIR")
             .unwrap_or_else(|_| "./image_cache".to_string());
 
@@ -48,6 +56,7 @@ impl AppState {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2592000),
             tmdb_api_key,
+            tvdb_api_key,
             image_cache_dir,
         }
     }
