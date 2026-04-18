@@ -58,23 +58,28 @@ This document outlines the implementation steps for building the Orthanc media s
 - [x] Validate library paths exist and are accessible
 
 ### 3.2 File System Scanning
-- [ ] Implement directory walker
-- [ ] Identify video file types
-- [ ] Extract file metadata (size, creation date, etc.)
-- [ ] Parse filenames for metadata hints
-- [ ] Implement TV show naming detection (S01E01 format)
-- [ ] Implement movie naming detection
-- [ ] Handle multi-file movies (parts, discs)
-- [ ] Store file paths and basic info in database
+- [x] Implement directory walker
+- [x] Identify video file types
+- [x] Extract file metadata (size, creation date, etc.)
+- [x] Parse filenames for metadata hints
+- [x] Implement TV show naming detection (S01E01 format)
+- [x] Implement movie naming detection
+- [x] Handle multi-file movies (parts, discs)
+- [x] Store file paths and basic info in database
 
 ### 3.3 Metadata Fetching
+- [ ] Per library, allow enable / disable/ priority order for metadata sources
 - [ ] Integrate with TMDB API for movies
 - [ ] Integrate with TMDB/TVDB API for TV shows
 - [ ] Fetch posters, backdrops, and thumbnails
 - [ ] Download and cache artwork locally
 - [ ] Store metadata in database
-- [ ] Implement metadata refresh functionality
+- [ ] Implement metadata refresh functionality. when a new item is added, on a schedule, manually
 - [ ] Handle manual metadata override
+- [ ] different kinds of refresh:
+A standard refresh only updates missing fields and leaves your local edits alone.
+A full/replace refresh (sometimes called "Refresh All Metadata" in Plex or "Replace all metadata" in Jellyfin) wipes existing metadata and re-pulls everything from scratch — useful if something got badly mangled, but it'll overwrite manual edits like custom posters or edited descriptions.
+- [ ] refresh per item (movie, tv show, season, episode)
 
 ### 3.4 Library API
 - [ ] Create endpoint to list libraries
