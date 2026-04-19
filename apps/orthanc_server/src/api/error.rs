@@ -18,6 +18,8 @@ pub enum ApiError {
     Conflict(String),
     #[error("Bad request: {0}")]
     BadRequest(String),
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
 }
@@ -30,6 +32,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            ApiError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.clone()),
             ApiError::Internal(e) => {
                 tracing::error!("Internal server error: {:?}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())

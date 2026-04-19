@@ -52,14 +52,15 @@ async fn main() -> anyhow::Result<()> {
         .await;
     });
 
-    // Spawn transcode cleanup task
+    // Spawn transcode cleanup task — sweep every 30s, kill sessions idle for 60s.
+    // HLS segment requests update last_accessed, acting as a natural heartbeat.
     let cleanup_manager = state.transcode_manager.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
             cleanup_manager
-                .cleanup_stale(std::time::Duration::from_secs(300))
+                .cleanup_stale(std::time::Duration::from_secs(60))
                 .await;
         }
     });

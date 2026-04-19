@@ -29,6 +29,10 @@ pub fn media_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/stream-token", post(create_stream_token))
         .route("/transcode-seek", post(transcode_seek))
+        .route(
+            "/transcode/{session_id}",
+            axum::routing::delete(stop_transcode),
+        )
         .route("/{id}/progress", get(get_progress))
         .route("/{id}/progress", put(update_progress))
 }
@@ -138,6 +142,7 @@ async fn create_stream_token(
         let session = state
             .transcode_manager
             .start_session(
+                user_id,
                 body.media_item_id,
                 &file_path,
                 mode,
@@ -146,7 +151,14 @@ async fn create_stream_token(
                 body.start_time,
             )
             .await
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("Transcode start failed: {}", e)))?;
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("Maximum concurrent transcodes") {
+                    ApiError::TooManyRequests("Too many active streams. Please stop playback on another device or try again shortly.".into())
+                } else {
+                    ApiError::Internal(anyhow::anyhow!("Transcode start failed: {}", e))
+                }
+            })?;
 
         // Wait for first segment (with timeout)
         let sid = session.session_id.clone();
@@ -222,6 +234,19 @@ async fn transcode_seek(
         ready,
         seek_time: body.seek_time,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Stop transcode session
+// ---------------------------------------------------------------------------
+
+async fn stop_transcode(
+    AuthUser(_): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> StatusCode {
+    state.transcode_manager.stop_session(&session_id).await;
+    StatusCode::NO_CONTENT
 }
 
 // ---------------------------------------------------------------------------

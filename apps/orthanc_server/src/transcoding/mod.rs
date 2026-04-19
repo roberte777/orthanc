@@ -110,6 +110,7 @@ pub fn decide_transcode_mode(
 
 pub struct TranscodeSession {
     pub session_id: String,
+    pub user_id: i64,
     pub media_item_id: i64,
     pub output_dir: PathBuf,
     pub mode: TranscodeMode,
@@ -203,6 +204,7 @@ impl TranscodeSessionManager {
     /// The caller should await `session.ready.notified()` before serving the HLS URL.
     pub async fn start_session(
         &self,
+        user_id: i64,
         media_item_id: i64,
         file_path: &str,
         mode: TranscodeMode,
@@ -210,7 +212,7 @@ impl TranscodeSessionManager {
         _audio_stream: Option<&MediaStream>,
         start_time: f64,
     ) -> Result<Arc<TranscodeSession>, anyhow::Error> {
-        // Check concurrent limit
+        // Check global concurrent limit
         {
             let sessions = self.sessions.read().await;
             if sessions.len() >= self.max_concurrent {
@@ -239,6 +241,7 @@ impl TranscodeSessionManager {
 
         let session = Arc::new(TranscodeSession {
             session_id: session_id.clone(),
+            user_id,
             media_item_id,
             output_dir: output_dir.clone(),
             mode,
@@ -460,6 +463,22 @@ impl TranscodeSessionManager {
                 let _ = tokio::fs::remove_dir_all(&session.output_dir).await;
             }
             info!("Stopped transcode session {}", session_id);
+        }
+    }
+
+    /// Stop all transcode sessions owned by a specific user.
+    pub async fn stop_user_sessions(&self, user_id: i64) {
+        let user_session_ids: Vec<String> = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .iter()
+                .filter(|(_, s)| s.user_id == user_id)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in &user_session_ids {
+            info!("Stopping transcode session {} for user {}", id, user_id);
+            self.stop_session(id).await;
         }
     }
 

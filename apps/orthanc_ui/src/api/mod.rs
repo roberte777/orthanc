@@ -422,6 +422,19 @@ pub async fn transcode_seek(token: &str, session_id: &str, seek_time: f64) -> Re
     post_json("/api/media/transcode-seek", &body, Some(token)).await
 }
 
+pub async fn stop_transcode(token: &str, session_id: &str) -> Result<(), String> {
+    let url = format!("{}/api/media/transcode/{}", API_BASE, session_id);
+    let client = reqwest::Client::new();
+    let resp = client.delete(&url).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("Error {}: {}", status, text))
+    }
+}
+
 pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) -> Result<(), String> {
     let body = serde_json::json!({"position_seconds": position_seconds});
     let url = format!("{}/api/media/{}/progress", API_BASE, media_id);

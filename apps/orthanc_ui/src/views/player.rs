@@ -102,6 +102,25 @@ pub fn Player(id: i64) -> Element {
     let mut last_seek_time = use_signal(|| 0.0_f64);
     let nav = use_navigator();
 
+    // Cleanup transcode session on unmount (e.g. browser navigation, route change)
+    use_drop(move || {
+        let session = transcode_session_id();
+        if let Some(sid) = session {
+            destroy_hls();
+            // Remove keyboard listener
+            let _ = js_sys::eval(
+                "if (window._orthanc_keydown) { window.removeEventListener('keydown', window._orthanc_keydown); window._orthanc_keydown = null; }",
+            );
+            spawn(async move {
+                let _ = with_refresh(auth, move |token| {
+                    let sid = sid.clone();
+                    async move { api::stop_transcode(&token, &sid).await }
+                })
+                .await;
+            });
+        }
+    });
+
     // Fetch progress first, then stream token (so we can pass resume position as start_time)
     use_effect(move || {
         spawn(async move {
@@ -193,7 +212,12 @@ pub fn Player(id: i64) -> Element {
                     }
                 }
                 Err(e) => {
-                    error_msg.set(Some(format!("Failed to get stream: {}", e)));
+                    let msg = if e.contains("429") {
+                        "Too many active transcoding streams. Please stop playback on another device or wait a moment and try again.".to_string()
+                    } else {
+                        format!("Failed to get stream: {}", e)
+                    };
+                    error_msg.set(Some(msg));
                 }
             }
         });
@@ -402,18 +426,27 @@ pub fn Player(id: i64) -> Element {
     };
 
     let go_back = move |_| {
-        // Save progress before leaving
+        destroy_hls();
+        // Save progress and stop transcode session, then navigate away
         let t = current_time();
-        if t > 0.0 {
-            spawn(async move {
+        let session = transcode_session_id();
+        spawn(async move {
+            if t > 0.0 {
                 let _ = with_refresh(auth, |token| async move {
                     api::update_progress(&token, id, t as i32).await
                 })
                 .await;
-            });
-        }
-        destroy_hls();
-        nav.go_back();
+            }
+            if let Some(ref sid) = session {
+                let sid = sid.clone();
+                let _ = with_refresh(auth, move |token| {
+                    let sid = sid.clone();
+                    async move { api::stop_transcode(&token, &sid).await }
+                })
+                .await;
+            }
+            nav.go_back();
+        });
     };
 
     let format_time = |seconds: f64| -> String {
