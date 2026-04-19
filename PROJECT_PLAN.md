@@ -112,6 +112,12 @@ maybe done?
 - [ ] Add transcoding progress tracking
 - [ ] Make sure to support remux, audio transcode, and full video transcoding
 
+### Playback Observability
+
+- [ ] Have a screen for admins that shows what users are currently watching. This
+should contain details about the stream, such as the format / codec the client
+is consuming at. Should also indicate if doing any kinds of transcoding
+
 ### 4.3 Hardware Transcoding
 - [ ] Detect available hardware encoders
   - NVIDIA NVENC

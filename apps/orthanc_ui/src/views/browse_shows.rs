@@ -226,7 +226,26 @@ pub fn ShowDetail(id: i64) -> Element {
                         p { class: "detail-description", "{desc}" }
                     }
                     div { class: "detail-actions",
-                        button { class: "btn-play", disabled: true, "Play" }
+                        {
+                            let nav = use_navigator();
+                            let first_ep_id = seasons.first()
+                                .and_then(|s| s.children.as_ref())
+                                .and_then(|eps| eps.first())
+                                .map(|ep| ep.id);
+                            rsx! {
+                                if let Some(ep_id) = first_ep_id {
+                                    button {
+                                        class: "btn-play",
+                                        onclick: move |_| {
+                                            nav.push(crate::Route::Player { id: ep_id });
+                                        },
+                                        "Play"
+                                    }
+                                } else {
+                                    button { class: "btn-play", disabled: true, "Play" }
+                                }
+                            }
+                        }
                     }
                     if is_admin {
                         div { class: "detail-admin-actions",
@@ -309,13 +328,19 @@ pub fn ShowDetail(id: i64) -> Element {
 
 #[component]
 fn EpisodeRow(episode: MediaItemResponse, cache_bust: u32) -> Element {
+    let ep_id = episode.id;
     let ep_num = episode.episode_number.unwrap_or(0);
     let runtime = format_runtime(episode.duration_seconds);
     let thumb_src = episode.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cache_bust));
     let has_thumb = thumb_src.is_some();
+    let nav = use_navigator();
 
     rsx! {
-        div { class: "ep-card",
+        div {
+            class: "ep-card",
+            onclick: move |_| {
+                nav.push(crate::Route::Player { id: ep_id });
+            },
             // Left: number
             div { class: "ep-card-num", "{ep_num}" }
             // Thumbnail

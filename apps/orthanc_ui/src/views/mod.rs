@@ -6,5 +6,6 @@ pub mod browse_movies;
 pub mod browse_shows;
 pub mod home;
 pub mod login;
+pub mod player;
 pub mod settings;
 pub mod setup;

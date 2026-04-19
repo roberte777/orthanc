@@ -375,6 +375,43 @@ pub async fn change_password(token: &str, req: ChangePasswordRequest) -> Result<
     Ok(())
 }
 
+// ── Streaming ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamTokenResponse {
+    pub token: String,
+    pub stream_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackProgress {
+    pub position_seconds: i32,
+    pub is_completed: bool,
+}
+
+pub async fn get_stream_token(token: &str, media_id: i64) -> Result<StreamTokenResponse, String> {
+    let body = serde_json::json!({"media_item_id": media_id});
+    post_json("/api/media/stream-token", &body, Some(token)).await
+}
+
+pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) -> Result<(), String> {
+    let body = serde_json::json!({"position_seconds": position_seconds});
+    let url = format!("{}/api/media/{}/progress", API_BASE, media_id);
+    let client = reqwest::Client::new();
+    let resp = client.put(&url).json(&body).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("Error {}: {}", status, text))
+    }
+}
+
+pub async fn get_progress(token: &str, media_id: i64) -> Result<PlaybackProgress, String> {
+    get_json(&format!("/api/media/{}/progress", media_id), Some(token)).await
+}
+
 // HTTP helpers using reqwest
 async fn get_json<T: DeserializeOwned>(path: &str, token: Option<&str>) -> Result<T, String> {
     let url = format!("{}{}", API_BASE, path);

@@ -15,6 +15,7 @@ use views::{
     browse_shows::{BrowseShows, ShowDetail},
     home::Home,
     login::Login,
+    player::Player,
     settings::Settings,
     setup::Setup,
 };
@@ -26,6 +27,8 @@ enum Route {
     Login {},
     #[route("/setup")]
     Setup {},
+    #[route("/player/:id")]
+    Player { id: i64 },
     #[layout(AppShell)]
         #[route("/")]
         Home {},

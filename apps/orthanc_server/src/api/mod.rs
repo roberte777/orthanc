@@ -9,6 +9,7 @@ pub mod libraries;
 pub mod media;
 pub mod metadata_api;
 pub mod settings;
+pub mod streaming;
 pub mod users;
 
 pub use state::AppState;
@@ -24,6 +25,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .nest("/api/admin/libraries", libraries::router())
         .nest("/api/admin/metadata", metadata_api::router())
         .nest("/api/media", media::router())
+        .nest("/api/media", streaming::media_router())
+        .nest("/api/stream", streaming::stream_router())
         .with_state(state.clone())
         .nest_service(
             "/api/images",

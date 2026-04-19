@@ -208,7 +208,18 @@ pub fn MovieDetail(id: i64) -> Element {
                         p { class: "detail-description", "{desc}" }
                     }
                     div { class: "detail-actions",
-                        button { class: "btn-play", disabled: true, "Play" }
+                        {
+                            let nav = use_navigator();
+                            rsx! {
+                                button {
+                                    class: "btn-play",
+                                    onclick: move |_| {
+                                        nav.push(crate::Route::Player { id });
+                                    },
+                                    "Play"
+                                }
+                            }
+                        }
                     }
                     if is_admin {
                         div { class: "detail-admin-actions",

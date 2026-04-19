@@ -33,4 +33,5 @@ regex.workspace = true
 reqwest.workspace = true
 quick-xml.workspace = true
 flate2.workspace = true
-tokio-util = { version = "0.7.18", features = ["io"] }
+tokio-util.workspace = true
+futures-core.workspace = true

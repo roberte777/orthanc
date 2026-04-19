@@ -1,4 +1,14 @@
 use crate::db::DbPool;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Data for a short-lived streaming token.
+pub struct StreamTokenData {
+    pub user_id: i64,
+    pub media_item_id: i64,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
 
 pub struct AppState {
     pub db: DbPool,
@@ -8,6 +18,11 @@ pub struct AppState {
     pub tmdb_api_key: Option<String>,
     pub tvdb_api_key: String,
     pub image_cache_dir: String,
+    // Streaming
+    pub stream_tokens: Arc<RwLock<HashMap<String, StreamTokenData>>>,
+    pub active_streams: Arc<RwLock<HashMap<i64, usize>>>,
+    pub max_concurrent_streams: usize,
+    pub max_bandwidth_bytes_per_sec: Option<u64>,
 }
 
 impl AppState {
@@ -44,6 +59,16 @@ impl AppState {
             tracing::error!("Failed to create image cache dir '{}': {}", image_cache_dir, e);
         }
 
+        let max_concurrent_streams = std::env::var("MAX_CONCURRENT_STREAMS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+
+        let max_bandwidth_bytes_per_sec = std::env::var("MAX_BANDWIDTH_MBPS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|mbps| mbps * 1_000_000);
+
         Self {
             db,
             jwt_secret,
@@ -58,6 +83,10 @@ impl AppState {
             tmdb_api_key,
             tvdb_api_key,
             image_cache_dir,
+            stream_tokens: Arc::new(RwLock::new(HashMap::new())),
+            active_streams: Arc::new(RwLock::new(HashMap::new())),
+            max_concurrent_streams,
+            max_bandwidth_bytes_per_sec,
         }
     }
 }
