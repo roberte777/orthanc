@@ -68,18 +68,18 @@ This document outlines the implementation steps for building the Orthanc media s
 - [x] Store file paths and basic info in database
 
 ### 3.3 Metadata Fetching
-- [ ] Per library, allow enable / disable/ priority order for metadata sources
-- [ ] Integrate with TMDB API for movies
-- [ ] Integrate with TMDB/TVDB API for TV shows
-- [ ] Fetch posters, backdrops, and thumbnails
-- [ ] Download and cache artwork locally
-- [ ] Store metadata in database
-- [ ] Implement metadata refresh functionality. when a new item is added, on a schedule, manually
-- [ ] Handle manual metadata override
-- [ ] different kinds of refresh:
+- [x] Per library, allow enable / disable/ priority order for metadata sources
+- [x] Integrate with TMDB API for movies
+- [x] Integrate with TMDB/TVDB API for TV shows
+- [x] Fetch posters, backdrops, and thumbnails
+- [x] Download and cache artwork locally
+- [x] Store metadata in database
+- [x] Implement metadata refresh functionality. when a new item is added, on a schedule, manually
+- [x] Handle manual metadata override
+- [x] different kinds of refresh:
 A standard refresh only updates missing fields and leaves your local edits alone.
 A full/replace refresh (sometimes called "Refresh All Metadata" in Plex or "Replace all metadata" in Jellyfin) wipes existing metadata and re-pulls everything from scratch — useful if something got badly mangled, but it'll overwrite manual edits like custom posters or edited descriptions.
-- [ ] refresh per item (movie, tv show, season, episode)
+- [x] refresh per item (movie, tv show, season, episode)
 
 ### 3.4 Library API
 maybe done?
@@ -114,10 +114,10 @@ maybe done?
 
 ### Playback Observability
 
-- [ ] Have a screen for admins that shows what users are currently watching. This
+- [x] Have a screen for admins that shows what users are currently watching. This
 should contain details about the stream, such as the format / codec the client
 is consuming at. Should also indicate if doing any kinds of transcoding
-- [ ] Remove transcoding indicator from player. It should live in the monitoring page for admins.
+- [x] Remove transcoding indicator from player. It should live in the monitoring page for admins.
 
 ### 4.3 Hardware Transcoding
 - [ ] Detect available hardware encoders
@@ -129,6 +129,7 @@ is consuming at. Should also indicate if doing any kinds of transcoding
 - [ ] Add fallback to software encoding
 - [ ] Configure hardware-specific FFmpeg options
 - [ ] Benchmark and optimize settings
+- [ ] Relevant options exposed in settings page
 
 ### 4.4 Adaptive Streaming
 - [ ] Implement quality selection based on client request
@@ -156,7 +157,6 @@ is consuming at. Should also indicate if doing any kinds of transcoding
 - [ ] Store timestamp for resume playback
 - [ ] Mark items as watched
 - [ ] Create "Continue Watching" endpoint
-- [ ] Add "Up Next" suggestions
 
 ## Phase 6: Performance & Optimization
 
