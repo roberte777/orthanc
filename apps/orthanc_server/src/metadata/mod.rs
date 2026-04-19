@@ -872,6 +872,15 @@ async fn refresh_show_tvdb(
 
     let detail = client.series_extended(tvdb_id).await?;
 
+    // Fetch English translation — the base response uses the show's original language.
+    let translation = match client.series_translation(tvdb_id).await {
+        Ok(t) => Some(t),
+        Err(e) => {
+            debug!("No English translation for TVDB series {}: {}", tvdb_id, e);
+            None
+        }
+    };
+
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
             .bind(item.id).execute(db).await?;
@@ -880,7 +889,11 @@ async fn refresh_show_tvdb(
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref overview) = detail.overview {
+        // Prefer English translation, fall back to original overview.
+        let overview = translation.as_ref()
+            .and_then(|t| t.overview.as_deref())
+            .or(detail.overview.as_deref());
+        if let Some(overview) = overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview).bind(item.id).execute(db).await?;
@@ -986,6 +999,15 @@ async fn refresh_movie_tvdb(
 
     let detail = client.movie_extended(tvdb_id).await?;
 
+    // Fetch English translation — the base response uses the movie's original language.
+    let translation = match client.movie_translation(tvdb_id).await {
+        Ok(t) => Some(t),
+        Err(e) => {
+            debug!("No English translation for TVDB movie {}: {}", tvdb_id, e);
+            None
+        }
+    };
+
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
             .bind(item.id).execute(db).await?;
@@ -994,7 +1016,10 @@ async fn refresh_movie_tvdb(
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref overview) = detail.overview {
+        let overview = translation.as_ref()
+            .and_then(|t| t.overview.as_deref())
+            .or(detail.overview.as_deref());
+        if let Some(overview) = overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview).bind(item.id).execute(db).await?;

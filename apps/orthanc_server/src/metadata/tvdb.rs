@@ -9,7 +9,7 @@
 //! minimum spacing between requests and back off on HTTP 429 so a bulk scan
 //! doesn't get the embedded subscriber key throttled or banned.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
@@ -85,11 +85,11 @@ pub struct SeriesExtended {
     pub year: Option<String>,
     #[serde(default)]
     pub first_aired: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub genres: Vec<TvdbGenre>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub artworks: Vec<Artwork>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub seasons: Vec<SeasonSummary>,
 }
 
@@ -133,11 +133,12 @@ pub struct SeasonType {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeriesEpisodesData {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub episodes: Vec<Episode>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Episode {
     pub id: u64,
     #[serde(default)]
@@ -154,6 +155,18 @@ pub struct Episode {
     pub aired: Option<String>,
     #[serde(default)]
     pub image: Option<String>,
+}
+
+// ── Translations ──
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Translation {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub overview: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 // ── Movies ──
@@ -173,9 +186,9 @@ pub struct MovieExtended {
     pub year: Option<String>,
     #[serde(default)]
     pub runtime: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub genres: Vec<TvdbGenre>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub artworks: Vec<Artwork>,
 }
 
@@ -273,7 +286,12 @@ impl TvdbClient {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(anyhow::anyhow!("TVDB {} failed ({}): {}", path, status, body));
             }
-            let env: Envelope<T> = resp.json().await?;
+            let body = resp.text().await?;
+            let env: Envelope<T> = serde_json::from_str(&body).map_err(|e| {
+                warn!("TVDB deserialization error for {}: {}", path, e);
+                debug!("TVDB response body: {}", &body[..body.len().min(2000)]);
+                anyhow::anyhow!("TVDB deserialization error for {}: {}", path, e)
+            })?;
             return Ok(env.data);
         }
         Err(anyhow::anyhow!("TVDB request to {} failed after retry", path))
@@ -298,9 +316,41 @@ impl TvdbClient {
     }
 
     pub async fn series_episodes(&self, id: u64) -> Result<SeriesEpisodesData, anyhow::Error> {
-        // season-type "default" = aired order, the most common for file naming.
-        let path = format!("/series/{}/episodes/default?page=0", id);
-        debug!("TVDB series episodes: {}", id);
+        // season-type "default" = aired order; language "eng" returns translated
+        // episode names and overviews. The endpoint is paginated, so fetch all pages.
+        let mut all_episodes = Vec::new();
+        let mut page = 0u32;
+        loop {
+            let path = format!("/series/{}/episodes/default/eng?page={}", id, page);
+            debug!("TVDB series episodes page {}: {}", page, id);
+            let data: SeriesEpisodesData = self.get_json(&path).await?;
+            let count = data.episodes.len();
+            all_episodes.extend(data.episodes);
+            if count == 0 {
+                break;
+            }
+            page += 1;
+            // Safety cap to avoid infinite loops
+            if page > 20 {
+                warn!("TVDB episodes pagination exceeded 20 pages for series {}", id);
+                break;
+            }
+        }
+        debug!("TVDB fetched {} total episodes for series {}", all_episodes.len(), id);
+        Ok(SeriesEpisodesData { episodes: all_episodes })
+    }
+
+    /// Fetch the English translation for a series (name + overview).
+    pub async fn series_translation(&self, id: u64) -> Result<Translation, anyhow::Error> {
+        let path = format!("/series/{}/translations/eng", id);
+        debug!("TVDB series translation: {}", id);
+        self.get_json(&path).await
+    }
+
+    /// Fetch the English translation for a movie (name + overview).
+    pub async fn movie_translation(&self, id: u64) -> Result<Translation, anyhow::Error> {
+        let path = format!("/movies/{}/translations/eng", id);
+        debug!("TVDB movie translation: {}", id);
         self.get_json(&path).await
     }
 
@@ -310,12 +360,28 @@ impl TvdbClient {
         self.get_json(&path).await
     }
 
-    /// Download an artwork URL (TVDB artwork URLs are absolute).
+    /// Download an artwork URL. Handles both absolute URLs and relative paths
+    /// (episode images often come as `/banners/...`).
     pub async fn download_image(&self, url: &str) -> Result<Vec<u8>, anyhow::Error> {
+        let full_url = if url.starts_with("http") {
+            url.to_string()
+        } else {
+            format!("https://artworks.thetvdb.com{}", url)
+        };
         self.rate_limit().await;
-        let bytes = self.client.get(url).send().await?.bytes().await?;
+        let bytes = self.client.get(&full_url).send().await?.bytes().await?;
         Ok(bytes.to_vec())
     }
+}
+
+/// Deserialize a `Vec<T>` that may be `null` in the JSON (TVDB returns `null`
+/// instead of `[]` for empty collections).
+fn null_as_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 fn urlencode(s: &str) -> String {
