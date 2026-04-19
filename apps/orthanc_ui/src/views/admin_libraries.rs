@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use crate::{
     api::{self, CreateLibraryRequest, LibraryResponse, UpdateLibraryRequest},
-    state::AuthState,
+    state::{AuthState, with_refresh},
 };
 
 #[component]
@@ -13,7 +13,6 @@ pub fn AdminLibraries() -> Element {
         nav.replace(crate::Route::Home {});
     }
 
-    let token = auth.read().access_token.clone().unwrap_or_default();
     let mut libraries = use_signal(Vec::<LibraryResponse>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| Option::<String>::None);
@@ -21,19 +20,17 @@ pub fn AdminLibraries() -> Element {
     let mut editing_id = use_signal(|| Option::<i64>::None);
     let mut delete_confirm = use_signal(|| Option::<i64>::None);
 
-    let load_libraries = {
-        let token = token.clone();
-        move || {
-            let tok = token.clone();
-            loading.set(true);
-            spawn(async move {
-                match api::list_libraries(&tok).await {
-                    Ok(libs) => libraries.set(libs),
-                    Err(e) => error.set(Some(e)),
-                }
-                loading.set(false);
-            });
-        }
+    let load_libraries = move || {
+        loading.set(true);
+        spawn(async move {
+            match with_refresh(auth, |token| async move {
+                api::list_libraries(&token).await
+            }).await {
+                Ok(libs) => libraries.set(libs),
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
     };
 
     let mut load_for_effect = load_libraries.clone();

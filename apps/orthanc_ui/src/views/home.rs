@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::api::{self, MediaItemResponse};
-use crate::state::AuthState;
+use crate::state::{AuthState, with_refresh};
 
 fn format_size(bytes: Option<i64>) -> String {
     match bytes {
@@ -38,9 +38,10 @@ pub fn Home() -> Element {
     let mut loaded = use_signal(|| false);
 
     use_effect(move || {
-        let token = auth.read().access_token.clone().unwrap_or_default();
         spawn(async move {
-            if let Ok(recent) = api::get_recent_media(&token).await {
+            if let Ok(recent) = with_refresh(auth, |token| async move {
+                api::get_recent_media(&token).await
+            }).await {
                 movies.set(recent.movies);
                 shows.set(recent.shows);
             }

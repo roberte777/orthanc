@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::api::{self, MediaItemResponse};
-use crate::state::AuthState;
+use crate::state::{AuthState, with_refresh};
 
 fn format_size(bytes: Option<i64>) -> String {
     match bytes {
@@ -52,9 +52,10 @@ pub fn BrowseShows() -> Element {
     let mut loading = use_signal(|| true);
 
     use_effect(move || {
-        let token = auth.read().access_token.clone().unwrap_or_default();
         spawn(async move {
-            if let Ok(s) = api::get_all_shows(&token).await {
+            if let Ok(s) = with_refresh(auth, |token| async move {
+                api::get_all_shows(&token).await
+            }).await {
                 shows.set(s);
             }
             loading.set(false);
@@ -134,9 +135,10 @@ pub fn ShowDetail(id: i64) -> Element {
     let mut load_count = use_signal(|| 0u32);
 
     let load_show = move || {
-        let token = auth.read().access_token.clone().unwrap_or_default();
         spawn(async move {
-            match api::get_show(&token, id).await {
+            match with_refresh(auth, |token| async move {
+                api::get_show(&token, id).await
+            }).await {
                 Ok(s) => {
                     show.set(Some(s));
                     load_count += 1;

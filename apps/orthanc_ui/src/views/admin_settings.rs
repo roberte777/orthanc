@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::{api::{self, Setting}, state::AuthState};
+use crate::{api::{self, Setting}, state::{AuthState, with_refresh}};
 
 struct SettingMeta {
     key: &'static str,
@@ -41,11 +41,11 @@ pub fn AdminSettings() -> Element {
     let mut save_message = use_signal(|| Option::<(bool, String)>::None);
     let mut edits = use_signal(std::collections::HashMap::<String, String>::new);
 
-    let tok = token.clone();
     use_effect(move || {
-        let tok = tok.clone();
         spawn(async move {
-            match api::get_server_settings(&tok).await {
+            match with_refresh(auth, |token| async move {
+                api::get_server_settings(&token).await
+            }).await {
                 Ok(s) => {
                     let mut map = std::collections::HashMap::new();
                     for setting in &s {

@@ -24,6 +24,12 @@ pub struct AuthResponse {
     pub user: UserResponse,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RefreshResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupStatus {
     pub needs_setup: bool,
@@ -309,6 +315,11 @@ pub async fn login(req: LoginRequest) -> Result<AuthResponse, String> {
 
 pub async fn get_me(token: &str) -> Result<UserResponse, String> {
     get_json("/api/auth/me", Some(token)).await
+}
+
+pub async fn refresh_tokens(refresh_token: &str) -> Result<RefreshResponse, String> {
+    let body = serde_json::json!({"refresh_token": refresh_token});
+    post_json("/api/auth/refresh", &body, None).await
 }
 
 pub async fn logout(token: &str, refresh_token: &str) -> Result<(), String> {

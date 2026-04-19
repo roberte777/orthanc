@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use crate::{
     Route,
-    state::{AuthState, clear_auth},
+    state::{AuthState, clear_auth, with_refresh},
 };
 
 #[component]
@@ -16,17 +16,15 @@ pub fn AppShell() -> Element {
         let has_user = auth.read().user.is_some();
 
         if has_token && !has_user {
-            let token = auth.read().access_token.clone().unwrap_or_default();
             spawn(async move {
-                match crate::api::get_me(&token).await {
+                match with_refresh(auth, |token| async move {
+                    crate::api::get_me(&token).await
+                }).await {
                     Ok(user) => {
                         auth.write().user = Some(user);
                     }
                     Err(_) => {
-                        // Token is invalid, clear and redirect
-                        clear_auth();
-                        auth.write().access_token = None;
-                        auth.write().refresh_token = None;
+                        // Token and refresh both invalid, redirect to login
                         nav.replace(Route::Login {});
                     }
                 }

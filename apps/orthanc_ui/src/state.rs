@@ -1,4 +1,5 @@
 use crate::api::UserResponse;
+use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthState {
@@ -69,6 +70,61 @@ pub fn clear_auth() {
         {
             let _ = storage.remove_item("access_token");
             let _ = storage.remove_item("refresh_token");
+        }
+    }
+}
+
+/// Wraps an authenticated API call with automatic token refresh on 401.
+///
+/// If the call fails with a 401, attempts to refresh the access token using
+/// the stored refresh token, updates the auth state and localStorage, then
+/// retries the original call once.
+pub async fn with_refresh<T, F, Fut>(
+    mut auth: Signal<AuthState>,
+    f: F,
+) -> Result<T, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let token = auth.read().access_token.clone().unwrap_or_default();
+    let result = f(token).await;
+
+    let is_401 = matches!(&result, Err(e) if e.starts_with("Error 401"));
+    if !is_401 {
+        return result;
+    }
+
+    let refresh_token = auth.read().refresh_token.clone();
+    let refresh_token = match refresh_token {
+        Some(rt) => rt,
+        None => {
+            clear_auth();
+            let mut w = auth.write();
+            w.access_token = None;
+            w.refresh_token = None;
+            w.user = None;
+            return Err("Session expired. Please log in again.".to_string());
+        }
+    };
+
+    match crate::api::refresh_tokens(&refresh_token).await {
+        Ok(tokens) => {
+            save_auth(&tokens.access_token, &tokens.refresh_token);
+            let new_token = tokens.access_token.clone();
+            let mut w = auth.write();
+            w.access_token = Some(tokens.access_token);
+            w.refresh_token = Some(tokens.refresh_token);
+            drop(w);
+            f(new_token).await
+        }
+        Err(_) => {
+            clear_auth();
+            let mut w = auth.write();
+            w.access_token = None;
+            w.refresh_token = None;
+            w.user = None;
+            Err("Session expired. Please log in again.".to_string())
         }
     }
 }

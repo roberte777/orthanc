@@ -82,6 +82,7 @@ A full/replace refresh (sometimes called "Refresh All Metadata" in Plex or "Repl
 - [ ] refresh per item (movie, tv show, season, episode)
 
 ### 3.4 Library API
+maybe done?
 - [ ] Create endpoint to list libraries
 - [ ] Create endpoint to list movies in library
 - [ ] Create endpoint to list TV shows in library
@@ -109,6 +110,7 @@ A full/replace refresh (sometimes called "Refresh All Metadata" in Plex or "Repl
 - [ ] Create m3u8 playlist files
 - [ ] Implement segment cleanup
 - [ ] Add transcoding progress tracking
+- [ ] Make sure to support remux, audio transcode, and full video transcoding
 
 ### 4.3 Hardware Transcoding
 - [ ] Detect available hardware encoders

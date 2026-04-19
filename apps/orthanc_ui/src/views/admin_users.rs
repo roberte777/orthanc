@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use crate::{
     api::{self, CreateUserRequest, UpdateUserRequest, UserResponse},
-    state::AuthState,
+    state::{AuthState, with_refresh},
 };
 
 #[component]
@@ -14,7 +14,6 @@ pub fn AdminUsers() -> Element {
         nav.replace(crate::Route::Home {});
     }
 
-    let token = auth.read().access_token.clone().unwrap_or_default();
     let mut users = use_signal(Vec::<UserResponse>::new);
     let mut total = use_signal(|| 0i64);
     let page = use_signal(|| 1u32);
@@ -24,23 +23,21 @@ pub fn AdminUsers() -> Element {
     let mut delete_confirm = use_signal(|| Option::<i64>::None);
 
     // Define load_users as a closure; clone it for each use site
-    let load_users = {
-        let token = token.clone();
-        move || {
-            let tok = token.clone();
-            let pg = page();
-            loading.set(true);
-            spawn(async move {
-                match api::list_users(&tok, pg).await {
-                    Ok(resp) => {
-                        users.set(resp.users);
-                        total.set(resp.total);
-                    }
-                    Err(e) => error.set(Some(e)),
+    let load_users = move || {
+        let pg = page();
+        loading.set(true);
+        spawn(async move {
+            match with_refresh(auth, |token| async move {
+                api::list_users(&token, pg).await
+            }).await {
+                Ok(resp) => {
+                    users.set(resp.users);
+                    total.set(resp.total);
                 }
-                loading.set(false);
-            });
-        }
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
     };
 
     let mut load_for_effect = load_users.clone();
