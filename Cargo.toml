@@ -60,3 +60,6 @@ futures-core = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Storage", "HtmlVideoElement", "HtmlMediaElement", "Document", "HtmlElement", "Element", "Event", "TimeRanges", "KeyboardEvent", "EventTarget"] }
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
+
+# Test helpers
+tempfile = "3"

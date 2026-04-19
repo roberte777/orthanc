@@ -77,6 +77,106 @@ fn destroy_hls() {
     );
 }
 
+/// Inject the subtitle attach/detach bridge. Must be called once per player
+/// mount so the helper exists on `window`.
+fn install_subtitle_bridge() {
+    let _ = js_sys::eval(r#"
+        window._orthancAttachSubtitle = function(url, lang, label, isDefault) {
+            var attempts = 0;
+            var apply = function() {
+                var video = document.getElementById('orthanc-player');
+                if (!video) {
+                    if (attempts++ < 20) { setTimeout(apply, 100); return; }
+                    return;
+                }
+                var existing = video.querySelectorAll('track[data-orthanc-sub="1"]');
+                for (var i = 0; i < existing.length; i++) { existing[i].remove(); }
+                for (var i = 0; i < video.textTracks.length; i++) {
+                    video.textTracks[i].mode = 'disabled';
+                }
+                if (!url) return;
+                var tr = document.createElement('track');
+                tr.kind = 'subtitles';
+                tr.setAttribute('crossorigin', 'anonymous');
+                tr.src = url;
+                if (lang) tr.srclang = lang;
+                if (label) tr.label = label;
+                if (isDefault) tr.default = true;
+                tr.setAttribute('data-orthanc-sub', '1');
+                tr.addEventListener('error', function(e) {
+                    console.error('[orthanc] subtitle track load error', e, url);
+                });
+                video.appendChild(tr);
+                console.debug('[orthanc] subtitle track attached', { url: url, label: label, lang: lang });
+                var forceShow = function() {
+                    try {
+                        if (tr.track) { tr.track.mode = 'showing'; }
+                    } catch (_) {}
+                    for (var i = 0; i < video.textTracks.length; i++) {
+                        var t = video.textTracks[i];
+                        // Only show the one we just attached; disable any others.
+                        if (t === tr.track || (label && t.label === label) || (lang && t.language === lang)) {
+                            t.mode = 'showing';
+                        } else {
+                            t.mode = 'disabled';
+                        }
+                    }
+                };
+                tr.addEventListener('load', function() {
+                    console.debug('[orthanc] subtitle track loaded', url);
+                    forceShow();
+                });
+                setTimeout(forceShow, 60);
+                setTimeout(forceShow, 250);
+                setTimeout(forceShow, 1000);
+            };
+            apply();
+        };
+    "#);
+}
+
+/// Build the URL+label for a subtitle track, then ask the JS bridge to attach it.
+/// `url` of None detaches (removes) any currently-attached subtitle track.
+fn js_attach_subtitle(url: Option<&str>, lang: &str, label: &str, is_default: bool) {
+    let js = match url {
+        Some(u) => {
+            let u_esc = u.replace('\\', "\\\\").replace('\'', "\\'");
+            let lang_esc = lang.replace('\\', "\\\\").replace('\'', "\\'");
+            let label_esc = label.replace('\\', "\\\\").replace('\'', "\\'");
+            format!(
+                "window._orthancAttachSubtitle('{}', '{}', '{}', {})",
+                u_esc, lang_esc, label_esc, is_default
+            )
+        }
+        None => "window._orthancAttachSubtitle(null)".to_string(),
+    };
+    let _ = js_sys::eval(&js);
+}
+
+/// Produce a user-facing label for a subtitle track.
+fn subtitle_label(t: &api::SubtitleTrack) -> String {
+    let base = t
+        .title
+        .clone()
+        .or_else(|| t.language.clone())
+        .unwrap_or_else(|| format!("Subtitle #{}", t.id));
+    let mut chips: Vec<&str> = Vec::new();
+    if t.is_forced {
+        chips.push("Forced");
+    }
+    if t.is_default {
+        chips.push("Default");
+    }
+    if t.is_external {
+        chips.push("External");
+    }
+    if chips.is_empty() {
+        base
+    } else {
+        format!("{} · {}", base, chips.join(" · "))
+    }
+}
+
 #[component]
 pub fn Player(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
@@ -100,7 +200,39 @@ pub fn Player(id: i64) -> Element {
     let mut hls_time_offset = use_signal(|| 0.0_f64);
     // Timestamp of last completed seek (for debouncing spurious onchange)
     let mut last_seek_time = use_signal(|| 0.0_f64);
+    // Subtitle state
+    let mut available_subtitles = use_signal(Vec::<api::SubtitleTrack>::new);
+    let mut selected_subtitle_id = use_signal(|| None::<i64>);
+    let mut burned_subtitle_id = use_signal(|| None::<i64>);
+    let mut subtitle_menu_open = use_signal(|| false);
+    // PTS offset for HLS subtitle alignment; 0.0 for direct play.
+    let mut subtitle_offset = use_signal(|| 0.0_f64);
     let nav = use_navigator();
+
+    // Install the subtitle JS bridge once per mount.
+    use_effect(move || {
+        install_subtitle_bridge();
+    });
+
+    // Helper: apply the currently-selected subtitle (or detach if None).
+    // Reads the latest signals each call so it's correct across seeks.
+    let mut apply_selected_subtitle = move || {
+        let maybe_id = selected_subtitle_id();
+        let subs = available_subtitles();
+        let token = stream_token();
+        let offset = subtitle_offset();
+        match maybe_id.and_then(|id| subs.iter().find(|t| t.id == id).cloned()) {
+            Some(track) => {
+                let url = api::subtitle_url(track.id, &token, offset);
+                let label = subtitle_label(&track);
+                let lang = track.language.clone().unwrap_or_default();
+                js_attach_subtitle(Some(&url), &lang, &label, track.is_default);
+            }
+            None => {
+                js_attach_subtitle(None, "", "", false);
+            }
+        }
+    };
 
     // Cleanup transcode session on unmount (e.g. browser navigation, route change)
     use_drop(move || {
@@ -150,7 +282,7 @@ pub fn Player(id: i64) -> Element {
                     let ac = ac.clone();
                     let ct = ct.clone();
                     async move {
-                        api::get_stream_token(&token, id, vc, ac, ct, resume_time).await
+                        api::get_stream_token(&token, id, vc, ac, ct, resume_time, None).await
                     }
                 }
             })
@@ -170,6 +302,23 @@ pub fn Player(id: i64) -> Element {
                             duration.set(dur as f64);
                         }
                     }
+
+                    // Seed subtitle state
+                    available_subtitles.set(resp.subtitles.clone());
+                    burned_subtitle_id.set(resp.burned_subtitle_id);
+                    let offset = resp
+                        .transcode_actual_start_seconds
+                        .unwrap_or(if mode == "direct" { 0.0 } else { resume_time });
+                    subtitle_offset.set(offset);
+
+                    // Auto-select the default text subtitle if one is flagged.
+                    let auto_select_id = resp
+                        .subtitles
+                        .iter()
+                        .find(|s| s.is_default && s.delivery == "vtt")
+                        .map(|s| s.id);
+                    selected_subtitle_id.set(auto_select_id);
+                    apply_selected_subtitle();
 
                     // For HLS modes, set the time offset and attach hls.js
                     if mode != "direct" {
@@ -283,6 +432,10 @@ pub fn Player(id: i64) -> Element {
                 match seek_result {
                     Ok(resp) if resp.ready => {
                         hls_time_offset.set(resp.seek_time);
+                        // Align subtitle cues to the new HLS playlist origin.
+                        // actual_start_seconds == seek_time (server side), so
+                        // this is the correct offset for cue shifting.
+                        subtitle_offset.set(resp.actual_start_seconds.max(resp.seek_time));
                         let cache_bust = js_sys::Date::now() as u64;
                         let auto_play = if was_playing { "true" } else { "false" };
                         let js = format!(
@@ -335,6 +488,8 @@ pub fn Player(id: i64) -> Element {
                         }
 
                         last_seek_time.set(t);
+                        // Re-attach the current subtitle with the new offset.
+                        apply_selected_subtitle();
                     }
                     _ => {}
                 }
@@ -425,6 +580,192 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
+    // Select a subtitle track (by id). None = off.
+    let mut select_subtitle = move |id: Option<i64>| {
+        selected_subtitle_id.set(id);
+        apply_selected_subtitle();
+        subtitle_menu_open.set(false);
+    };
+
+    // Cycle to the next deliverable subtitle (skips burn-required).
+    let mut cycle_subtitle = move || {
+        let next = api::cycle_subtitle_selection(selected_subtitle_id(), &available_subtitles());
+        select_subtitle(next);
+    };
+
+    // Request a burn-in restart: fetch a fresh stream token with burn_subtitle_id set.
+    // The existing HLS session is torn down; a new one is started server-side.
+    let mut request_burn_subtitle = move |burn_id: i64| {
+        subtitle_menu_open.set(false);
+        let t = current_time();
+        let prev_session = transcode_session_id();
+        destroy_hls();
+        spawn(async move {
+            // Save progress so the new session picks up from the same position.
+            if t > 0.0 {
+                let _ = with_refresh(auth, |token| async move {
+                    api::update_progress(&token, id, t as i32).await
+                })
+                .await;
+            }
+            // Stop the current transcode session (ignore failures).
+            if let Some(sid) = prev_session {
+                let _ = with_refresh(auth, move |token| {
+                    let sid = sid.clone();
+                    async move { api::stop_transcode(&token, &sid).await }
+                })
+                .await;
+            }
+
+            let (vc, ac, ct) = probe_client_capabilities();
+            let resp_result = with_refresh(auth, {
+                let vc = vc.clone();
+                let ac = ac.clone();
+                let ct = ct.clone();
+                move |token| {
+                    let vc = vc.clone();
+                    let ac = ac.clone();
+                    let ct = ct.clone();
+                    async move {
+                        api::get_stream_token(&token, id, vc, ac, ct, t, Some(burn_id)).await
+                    }
+                }
+            })
+            .await;
+
+            match resp_result {
+                Ok(resp) => {
+                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    stream_mode.set(resp.mode.clone());
+                    stream_url.set(Some(url.clone()));
+                    transcode_session_id.set(resp.transcode_session_id.clone());
+                    stream_token.set(resp.token.clone());
+                    burned_subtitle_id.set(resp.burned_subtitle_id);
+                    available_subtitles.set(resp.subtitles.clone());
+                    // A burn supersedes any selected VTT track.
+                    selected_subtitle_id.set(None);
+                    let offset = resp.transcode_actual_start_seconds.unwrap_or(t);
+                    subtitle_offset.set(offset);
+                    hls_time_offset.set(t);
+                    last_seek_time.set(t);
+                    // Re-attach (null to clear any prior track).
+                    apply_selected_subtitle();
+                    // Spin up hls.js for the new session
+                    let hls_url = url.clone();
+                    let token = resp.token.clone();
+                    let js = format!(
+                        "setTimeout(function() {{ \
+                            var video = document.getElementById('orthanc-player'); \
+                            if (!video) return; \
+                            if (typeof Hls !== 'undefined' && Hls.isSupported()) {{ \
+                                if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                var hls = new Hls({{ \
+                                    startPosition: 0, \
+                                    xhrSetup: function(xhr, url) {{ \
+                                        if (url.indexOf('token=') === -1) {{ \
+                                            var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                            url = url + sep + 'token={}'; \
+                                        }} \
+                                        xhr.open('GET', url, true); \
+                                    }} \
+                                }}); \
+                                hls.loadSource('{}'); \
+                                hls.attachMedia(video); \
+                                video.dataset.hlsUrl = '{}'; \
+                                window._orthanc_hls = hls; \
+                            }} \
+                        }}, 100);",
+                        token, hls_url, hls_url
+                    );
+                    let _ = js_sys::eval(&js);
+                }
+                Err(e) => {
+                    error_msg.set(Some(format!("Burn-in restart failed: {}", e)));
+                }
+            }
+        });
+    };
+
+    // Clear an active burn-in: fetch a fresh stream token without burn, resuming at current pos.
+    let mut clear_burn = move || {
+        subtitle_menu_open.set(false);
+        let t = current_time();
+        let prev_session = transcode_session_id();
+        destroy_hls();
+        spawn(async move {
+            if t > 0.0 {
+                let _ = with_refresh(auth, |token| async move {
+                    api::update_progress(&token, id, t as i32).await
+                })
+                .await;
+            }
+            if let Some(sid) = prev_session {
+                let _ = with_refresh(auth, move |token| {
+                    let sid = sid.clone();
+                    async move { api::stop_transcode(&token, &sid).await }
+                })
+                .await;
+            }
+            let (vc, ac, ct) = probe_client_capabilities();
+            let resp_result = with_refresh(auth, {
+                let vc = vc.clone();
+                let ac = ac.clone();
+                let ct = ct.clone();
+                move |token| {
+                    let vc = vc.clone();
+                    let ac = ac.clone();
+                    let ct = ct.clone();
+                    async move {
+                        api::get_stream_token(&token, id, vc, ac, ct, t, None).await
+                    }
+                }
+            })
+            .await;
+            if let Ok(resp) = resp_result {
+                let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                stream_mode.set(resp.mode.clone());
+                stream_url.set(Some(url.clone()));
+                transcode_session_id.set(resp.transcode_session_id.clone());
+                stream_token.set(resp.token.clone());
+                burned_subtitle_id.set(None);
+                available_subtitles.set(resp.subtitles.clone());
+                let offset = resp.transcode_actual_start_seconds.unwrap_or(t);
+                subtitle_offset.set(offset);
+                hls_time_offset.set(t);
+                last_seek_time.set(t);
+                if resp.mode != "direct" {
+                    let hls_url = url.clone();
+                    let token = resp.token.clone();
+                    let js = format!(
+                        "setTimeout(function() {{ \
+                            var video = document.getElementById('orthanc-player'); \
+                            if (!video) return; \
+                            if (typeof Hls !== 'undefined' && Hls.isSupported()) {{ \
+                                if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                var hls = new Hls({{ \
+                                    startPosition: 0, \
+                                    xhrSetup: function(xhr, url) {{ \
+                                        if (url.indexOf('token=') === -1) {{ \
+                                            var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                            url = url + sep + 'token={}'; \
+                                        }} \
+                                        xhr.open('GET', url, true); \
+                                    }} \
+                                }}); \
+                                hls.loadSource('{}'); \
+                                hls.attachMedia(video); \
+                                video.dataset.hlsUrl = '{}'; \
+                                window._orthanc_hls = hls; \
+                            }} \
+                        }}, 100);",
+                        token, hls_url, hls_url
+                    );
+                    let _ = js_sys::eval(&js);
+                }
+            }
+        });
+    };
+
     let go_back = move |_| {
         destroy_hls();
         // Save progress and stop transcode session, then navigate away
@@ -495,6 +836,10 @@ pub fn Player(id: i64) -> Element {
                         e.preventDefault();
                         var btn = document.querySelector('[data-action="skip-forward"]');
                         if (btn) btn.click();
+                    } else if (e.key === 'c' || e.key === 'C') {
+                        e.preventDefault();
+                        var btn = document.querySelector('[data-action="subtitle-cycle"]');
+                        if (btn) btn.click();
                     }
                 };
                 window.addEventListener('keydown', window._orthanc_keydown);
@@ -533,6 +878,7 @@ pub fn Player(id: i64) -> Element {
                     class: "player-video",
                     src: if is_direct { url.as_str() } else { "about:blank" },
                     preload: "metadata",
+                    crossorigin: "anonymous",
                     onplay: move |_| is_playing.set(true),
                     onpause: move |_| is_playing.set(false),
                     onwaiting: move |_| is_buffering.set(true),
@@ -690,6 +1036,78 @@ pub fn Player(id: i64) -> Element {
 
                             // Right controls
                             div { class: "player-controls-right",
+                                // Subtitle menu (only if subtitles exist)
+                                if !available_subtitles().is_empty() {
+                                    div { class: "player-subtitle-wrap",
+                                        button {
+                                            class: if selected_subtitle_id().is_some() || burned_subtitle_id().is_some() { "player-icon-btn player-sub-btn active" } else { "player-icon-btn player-sub-btn" },
+                                            onclick: move |_| {
+                                                let v = !subtitle_menu_open();
+                                                subtitle_menu_open.set(v);
+                                            },
+                                            dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z"/></svg>"#,
+                                        }
+                                        if subtitle_menu_open() {
+                                            div { class: "player-subtitle-menu",
+                                                onclick: move |e| e.stop_propagation(),
+                                                div { class: "player-subtitle-menu-header", "Subtitles" }
+                                                // "Off" option
+                                                button {
+                                                    class: if selected_subtitle_id().is_none() && burned_subtitle_id().is_none() { "player-subtitle-item selected" } else { "player-subtitle-item" },
+                                                    onclick: move |_| {
+                                                        if burned_subtitle_id().is_some() {
+                                                            clear_burn();
+                                                        } else {
+                                                            select_subtitle(None);
+                                                        }
+                                                    },
+                                                    "Off"
+                                                }
+                                                // Deliverable VTT tracks
+                                                for sub in available_subtitles().iter().filter(|s| s.delivery == "vtt") {
+                                                    {
+                                                        let label = subtitle_label(sub);
+                                                        let sid = sub.id;
+                                                        let is_selected = selected_subtitle_id() == Some(sid) && burned_subtitle_id().is_none();
+                                                        rsx! {
+                                                            button {
+                                                                key: "{sid}",
+                                                                class: if is_selected { "player-subtitle-item selected" } else { "player-subtitle-item" },
+                                                                onclick: move |_| select_subtitle(Some(sid)),
+                                                                "{label}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                // Burn-required tracks (separate section)
+                                                if available_subtitles().iter().any(|s| s.delivery == "burn_required") {
+                                                    div { class: "player-subtitle-divider", "Burn-in only" }
+                                                    for sub in available_subtitles().iter().filter(|s| s.delivery == "burn_required") {
+                                                        {
+                                                            let label = subtitle_label(sub);
+                                                            let sid = sub.id;
+                                                            let is_burned = burned_subtitle_id() == Some(sid);
+                                                            rsx! {
+                                                                button {
+                                                                    key: "{sid}",
+                                                                    class: if is_burned { "player-subtitle-item selected" } else { "player-subtitle-item" },
+                                                                    onclick: move |_| request_burn_subtitle(sid),
+                                                                    "{label} [Burn]"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Hidden cycle button — target of keyboard 'c'/'C'
+                                        button {
+                                            "data-action": "subtitle-cycle",
+                                            style: "display:none",
+                                            onclick: move |_| cycle_subtitle(),
+                                        }
+                                    }
+                                }
                                 // Fullscreen
                                 button {
                                     class: "player-icon-btn",

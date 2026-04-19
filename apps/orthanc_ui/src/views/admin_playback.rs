@@ -99,6 +99,7 @@ pub fn AdminPlayback() -> Element {
                                 th { "User" }
                                 th { "Media" }
                                 th { "Mode" }
+                                th { "Subtitles" }
                                 th { "Resolution" }
                                 th { "Position" }
                                 th { "Idle" }
@@ -119,11 +120,28 @@ pub fn AdminPlayback() -> Element {
                                     let idle = format!("{}s", row.idle_seconds);
                                     let short_sid: String = sid.chars().take(8).collect();
                                     let reload = load.clone();
+                                    let burn = row.burned_subtitle.clone();
                                     rsx! {
                                         tr { key: "{sid_key}",
                                             td { "{user}" }
                                             td { "{title}" }
                                             td { span { class: "badge", "{mode}" } }
+                                            td {
+                                                if let Some(b) = burn {
+                                                    {
+                                                        let name = b.title.clone()
+                                                            .or(b.language.clone())
+                                                            .unwrap_or_else(|| format!("stream #{}", b.stream_id));
+                                                        let forced = if b.is_forced { " [forced]" } else { "" };
+                                                        let external = if b.is_external { " [external]" } else { "" };
+                                                        rsx! {
+                                                            span { class: "badge badge-burn", "🔥 {name}{forced}{external}" }
+                                                        }
+                                                    }
+                                                } else {
+                                                    "—"
+                                                }
+                                            }
                                             td { "{height}" }
                                             td { "{position}" }
                                             td { "{idle}" }

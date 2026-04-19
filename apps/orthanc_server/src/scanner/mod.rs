@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod sidecar;
 pub mod walker;
 
 use crate::db::DbPool;
@@ -35,6 +36,8 @@ pub async fn background_scan_loop(
 ) {
     // Backfill stream info for items scanned before ffprobe integration
     backfill_streams(&db, &ffprobe_path).await;
+    // Backfill sidecar subtitles for items that predate sidecar support.
+    backfill_external_subtitles(&db).await;
 
     // Initial scan on startup
     info!("Running initial library scan");
@@ -182,6 +185,7 @@ pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) ->
                     // Probe streams for newly added items
                     let path_str = file_info.path.to_string_lossy();
                     probe_and_store_streams(db, new_id, &path_str, ffprobe_path).await;
+                    sync_external_subtitles(db, new_id, &file_info.path).await;
                 }
                 Ok(None) => result.unchanged += 1,
                 Err(e) => {
@@ -499,11 +503,14 @@ pub async fn probe_and_store_streams(
         }
     };
 
-    // Delete existing streams for this item
-    if let Err(e) = sqlx::query("DELETE FROM media_streams WHERE media_item_id = ?")
-        .bind(media_item_id)
-        .execute(db)
-        .await
+    // Delete existing embedded streams for this item. External (sidecar)
+    // subtitle rows are preserved — they're managed by sidecar discovery.
+    if let Err(e) = sqlx::query(
+        "DELETE FROM media_streams WHERE media_item_id = ? AND is_external = 0",
+    )
+    .bind(media_item_id)
+    .execute(db)
+    .await
     {
         warn!("Failed to clear old media_streams: {}", e);
         return;
@@ -593,6 +600,135 @@ fn parse_frame_rate(rate: &str) -> Option<f64> {
         return None;
     }
     Some(num / den)
+}
+
+/// Discover sidecar subtitle files for a media item and sync them into the
+/// `media_streams` table. Rows for sidecars that no longer exist on disk are
+/// removed; rows for newly discovered files are inserted. Existing rows are
+/// left untouched (cached VTT extractions keyed by their id remain valid).
+///
+/// Sidecar streams use synthetic `stream_index` values starting at 1000 to
+/// avoid colliding with embedded ffprobe stream indices.
+pub async fn sync_external_subtitles(db: &DbPool, media_item_id: i64, video_path: &std::path::Path) {
+    let discovered = sidecar::discover_sidecars(video_path);
+
+    // Load currently-indexed external subtitles for this item
+    let existing: Vec<(i64, Option<String>)> = match sqlx::query_as(
+        "SELECT id, external_file_path FROM media_streams WHERE media_item_id = ? AND is_external = 1",
+    )
+    .bind(media_item_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!("Failed to load existing external subtitles for {}: {}", media_item_id, e);
+            return;
+        }
+    };
+
+    let discovered_paths: std::collections::HashSet<String> = discovered
+        .iter()
+        .map(|s| s.path.to_string_lossy().to_string())
+        .collect();
+    let existing_paths: std::collections::HashSet<String> = existing
+        .iter()
+        .filter_map(|(_, p)| p.clone())
+        .collect();
+
+    // Remove rows for sidecars that have been deleted from disk
+    for (row_id, path) in &existing {
+        if let Some(p) = path {
+            if !discovered_paths.contains(p) {
+                if let Err(e) = sqlx::query("DELETE FROM media_streams WHERE id = ?")
+                    .bind(row_id)
+                    .execute(db)
+                    .await
+                {
+                    warn!("Failed to delete stale external subtitle row {}: {}", row_id, e);
+                }
+            }
+        }
+    }
+
+    // Find the highest existing synthetic index so we can append without collisions
+    let base_index: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(stream_index), 999) + 1 FROM media_streams WHERE media_item_id = ? AND is_external = 1",
+    )
+    .bind(media_item_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(1000);
+    let mut next_index = base_index.max(1000);
+
+    for info in &discovered {
+        let path_str = info.path.to_string_lossy().to_string();
+        if existing_paths.contains(&path_str) {
+            continue;
+        }
+        let codec = info.format.codec();
+        let title = info.title.clone();
+        if let Err(e) = sqlx::query(
+            "INSERT INTO media_streams (media_item_id, stream_index, stream_type, codec, language, title, is_default, is_forced, is_external, external_file_path)
+             VALUES (?, ?, 'subtitle', ?, ?, ?, ?, ?, 1, ?)",
+        )
+        .bind(media_item_id)
+        .bind(next_index as i32)
+        .bind(codec)
+        .bind(&info.language)
+        .bind(&title)
+        .bind(info.is_default)
+        .bind(info.is_forced)
+        .bind(&path_str)
+        .execute(db)
+        .await
+        {
+            warn!("Failed to insert external subtitle row for {}: {}", path_str, e);
+        } else {
+            next_index += 1;
+        }
+    }
+
+    if !discovered.is_empty() {
+        debug!(
+            "Synced {} external subtitle sidecar(s) for media_item {}",
+            discovered.len(),
+            media_item_id
+        );
+    }
+}
+
+/// Scan every existing media item for sidecar subtitles and sync them into
+/// `media_streams`. Used on startup so libraries that predate sidecar support
+/// pick up their external subtitles without a full re-scan.
+pub async fn backfill_external_subtitles(db: &DbPool) {
+    let items: Vec<(i64, String)> = match sqlx::query_as(
+        "SELECT id, file_path FROM media_items WHERE file_path IS NOT NULL AND media_type IN ('movie', 'episode')",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(items) => items,
+        Err(e) => {
+            warn!("Failed to query items for sidecar backfill: {}", e);
+            return;
+        }
+    };
+
+    if items.is_empty() {
+        return;
+    }
+
+    let mut scanned = 0usize;
+    for (id, path) in &items {
+        let p = std::path::Path::new(path);
+        if !p.is_file() {
+            continue;
+        }
+        sync_external_subtitles(db, *id, p).await;
+        scanned += 1;
+    }
+    info!("Sidecar subtitle backfill complete: scanned {} item(s)", scanned);
 }
 
 /// Backfill media_streams for items that were scanned before ffprobe integration.

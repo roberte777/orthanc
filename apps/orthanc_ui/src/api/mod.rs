@@ -378,6 +378,19 @@ pub async fn change_password(token: &str, req: ChangePasswordRequest) -> Result<
 // ── Streaming ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtitleTrack {
+    pub id: i64,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: Option<String>,
+    pub is_default: bool,
+    pub is_forced: bool,
+    pub is_external: bool,
+    /// "vtt" — served via /api/subtitles/{id}.vtt; "burn_required" — must be hardcoded
+    pub delivery: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamTokenResponse {
     pub token: String,
     pub stream_url: String,
@@ -385,12 +398,45 @@ pub struct StreamTokenResponse {
     pub title: String,
     pub duration_seconds: Option<i32>,
     pub transcode_session_id: Option<String>,
+    #[serde(default)]
+    pub subtitles: Vec<SubtitleTrack>,
+    #[serde(default)]
+    pub burned_subtitle_id: Option<i64>,
+    #[serde(default)]
+    pub transcode_actual_start_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaybackProgress {
     pub position_seconds: i32,
     pub is_completed: bool,
+}
+
+/// Build the URL for a subtitle track at the given offset.
+pub fn subtitle_url(stream_id: i64, token: &str, offset: f64) -> String {
+    format!(
+        "{}/api/subtitles/{}.vtt?token={}&offset={}",
+        API_BASE_URL, stream_id, token, offset
+    )
+}
+
+/// Cycle subtitle selection through the list. Returns the new selection.
+/// Cycles: None → first → second → ... → None.
+pub fn cycle_subtitle_selection(current: Option<i64>, list: &[SubtitleTrack]) -> Option<i64> {
+    let deliverable: Vec<&SubtitleTrack> = list.iter().filter(|s| s.delivery == "vtt").collect();
+    if deliverable.is_empty() {
+        return None;
+    }
+    match current {
+        None => Some(deliverable[0].id),
+        Some(cur) => {
+            let idx = deliverable.iter().position(|s| s.id == cur);
+            match idx {
+                Some(i) if i + 1 < deliverable.len() => Some(deliverable[i + 1].id),
+                _ => None,
+            }
+        }
+    }
 }
 
 pub async fn get_stream_token(
@@ -400,14 +446,18 @@ pub async fn get_stream_token(
     supported_audio_codecs: Vec<String>,
     supported_containers: Vec<String>,
     start_time: f64,
+    burn_subtitle_id: Option<i64>,
 ) -> Result<StreamTokenResponse, String> {
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "media_item_id": media_id,
         "start_time": start_time,
         "supported_video_codecs": supported_video_codecs,
         "supported_audio_codecs": supported_audio_codecs,
         "supported_containers": supported_containers,
     });
+    if let Some(id) = burn_subtitle_id {
+        body["burn_subtitle_id"] = serde_json::json!(id);
+    }
     post_json("/api/media/stream-token", &body, Some(token)).await
 }
 
@@ -415,6 +465,8 @@ pub async fn get_stream_token(
 pub struct TranscodeSeekResponse {
     pub ready: bool,
     pub seek_time: f64,
+    #[serde(default)]
+    pub actual_start_seconds: f64,
 }
 
 pub async fn transcode_seek(token: &str, session_id: &str, seek_time: f64) -> Result<TranscodeSeekResponse, String> {
@@ -449,6 +501,17 @@ pub struct ActiveStreamRow {
     pub idle_seconds: u64,
     pub username: Option<String>,
     pub media_title: Option<String>,
+    #[serde(default)]
+    pub burned_subtitle: Option<BurnedSubtitleDisplay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BurnedSubtitleDisplay {
+    pub stream_id: i64,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub is_forced: bool,
+    pub is_external: bool,
 }
 
 pub async fn list_active_streams(token: &str) -> Result<Vec<ActiveStreamRow>, String> {
@@ -551,5 +614,63 @@ async fn delete_req(path: &str, token: Option<&str>) -> Result<(), String> {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         Err(format!("Error {}: {}", status, text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(id: i64, delivery: &str) -> SubtitleTrack {
+        SubtitleTrack {
+            id,
+            language: None,
+            title: None,
+            codec: None,
+            is_default: false,
+            is_forced: false,
+            is_external: false,
+            delivery: delivery.into(),
+        }
+    }
+
+    #[test]
+    fn subtitle_url_has_offset() {
+        let u = subtitle_url(7, "abc", 123.5);
+        assert!(u.ends_with("/api/subtitles/7.vtt?token=abc&offset=123.5"));
+    }
+
+    #[test]
+    fn cycle_from_none_picks_first() {
+        let list = vec![track(10, "vtt"), track(11, "vtt")];
+        assert_eq!(cycle_subtitle_selection(None, &list), Some(10));
+    }
+
+    #[test]
+    fn cycle_advances() {
+        let list = vec![track(10, "vtt"), track(11, "vtt")];
+        assert_eq!(cycle_subtitle_selection(Some(10), &list), Some(11));
+    }
+
+    #[test]
+    fn cycle_wraps_to_none() {
+        let list = vec![track(10, "vtt"), track(11, "vtt")];
+        assert_eq!(cycle_subtitle_selection(Some(11), &list), None);
+    }
+
+    #[test]
+    fn cycle_skips_non_vtt_tracks() {
+        let list = vec![track(10, "burn_required"), track(11, "vtt")];
+        // None → first deliverable (id 11, since burn_required is skipped)
+        assert_eq!(cycle_subtitle_selection(None, &list), Some(11));
+        // From 11 (only deliverable) → None
+        assert_eq!(cycle_subtitle_selection(Some(11), &list), None);
+    }
+
+    #[test]
+    fn cycle_with_empty_returns_none() {
+        let list: Vec<SubtitleTrack> = vec![];
+        assert_eq!(cycle_subtitle_selection(None, &list), None);
+        assert_eq!(cycle_subtitle_selection(Some(5), &list), None);
     }
 }

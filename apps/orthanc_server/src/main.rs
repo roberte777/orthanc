@@ -4,6 +4,7 @@ mod db;
 mod metadata;
 mod models;
 mod scanner;
+mod subtitles;
 mod transcoding;
 
 use std::sync::Arc;
@@ -33,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     api::libraries::create_default_libraries(&pool).await?;
     seed_default_profiles(&pool).await?;
 
-    let state = Arc::new(api::AppState::from_env(pool.clone()));
+    let state = Arc::new(api::AppState::from_env_async(pool.clone()).await);
 
     // Spawn background scanner that runs on an interval
     let scan_pool = pool.clone();
@@ -64,6 +65,23 @@ async fn main() -> anyhow::Result<()> {
                 .await;
         }
     });
+
+    // Spawn subtitle cache sweeper — every 6 hours, remove orphaned cached
+    // WebVTT files and enforce the configured size cap.
+    {
+        let subtitle_dir = std::path::PathBuf::from(&state.subtitle_cache_dir);
+        let max_bytes = state.subtitle_cache_max_bytes;
+        let db = pool.clone();
+        tokio::spawn(async move {
+            subtitles::cleanup::run_cleanup_loop(
+                subtitle_dir,
+                db,
+                max_bytes,
+                std::time::Duration::from_secs(6 * 3600),
+            )
+            .await;
+        });
+    }
 
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)

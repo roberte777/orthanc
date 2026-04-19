@@ -42,11 +42,19 @@ const DEFAULT_AUDIO_CODECS: &[&str] = &["aac", "opus", "mp3"];
 const DEFAULT_CONTAINERS: &[&str] = &["mp4", "m4v", "webm", "mov"];
 
 /// Decide the transcode mode based on media streams, container, and client capabilities.
+///
+/// If `burn_requested` is true, returns `FullTranscode` unconditionally — burning
+/// a subtitle into the video stream requires a full re-encode.
 pub fn decide_transcode_mode(
     streams: &[MediaStream],
     container_format: Option<&str>,
     client: &ClientCapabilities,
+    burn_requested: bool,
 ) -> TranscodeMode {
+    if burn_requested {
+        return TranscodeMode::FullTranscode;
+    }
+
     let video = streams.iter().find(|s| s.stream_type == "video");
     let audio = streams.iter().find(|s| s.stream_type == "audio");
 
@@ -108,6 +116,31 @@ pub fn decide_transcode_mode(
 // Transcode session
 // ---------------------------------------------------------------------------
 
+/// Describes a subtitle stream selected for burn-in (hardcoded overlay).
+#[derive(Debug, Clone)]
+pub struct BurnSubtitle {
+    /// `media_streams.id`
+    pub stream_id: i64,
+    /// For embedded subtitles: the original ffprobe stream_index to pass to
+    /// FFmpeg's `subtitles=...:si=N` filter. `None` for external files.
+    pub stream_index: Option<i32>,
+    /// Absolute filesystem path for external subtitles; ignored for embedded.
+    pub external_file_path: Option<String>,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub is_forced: bool,
+    pub is_external: bool,
+}
+
+/// Resolved filesystem paths used by the FFmpeg invocation for a burn-in.
+#[derive(Debug, Clone)]
+struct BurnResolved {
+    /// The sanitized (symlinked/copied) source path FFmpeg should read.
+    sanitized_source: PathBuf,
+    /// For embedded: the stream index to pass as `si=N`. None for external.
+    stream_index: Option<i32>,
+}
+
 pub struct TranscodeSession {
     pub session_id: String,
     pub user_id: i64,
@@ -117,6 +150,16 @@ pub struct TranscodeSession {
     pub file_path: String,
     pub video_height: Option<i32>,
     pub start_time: RwLock<f64>,
+    /// True PTS of the first HLS segment, captured after FFmpeg produces it.
+    /// Clients use this as the subtitle offset; it may differ from
+    /// `start_time` by up to one GOP because of `-ss`-before-input keyframe alignment.
+    pub actual_start_time: RwLock<f64>,
+    /// Subtitle to burn into the video stream (FullTranscode only). Clonable so
+    /// it survives seek restarts.
+    pub burn_subtitle: Option<BurnSubtitle>,
+    /// Resolved burn paths (symlinked into output_dir). Cleaned up when the
+    /// session's output_dir is removed.
+    burn_resolved: RwLock<Option<BurnResolved>>,
     ffmpeg_child: RwLock<Option<tokio::process::Child>>,
     pub last_accessed: RwLock<Instant>,
     /// Sends `true` when the first .ts segment is ready. Reset to `false` on seek.
@@ -154,6 +197,18 @@ pub struct ActiveSessionInfo {
     pub file_path: String,
     pub start_time_seconds: f64,
     pub idle_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub burned_subtitle: Option<BurnedSubtitleDisplay>,
+}
+
+/// Admin-visible description of a subtitle being burned into a session's video.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BurnedSubtitleDisplay {
+    pub stream_id: i64,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub is_forced: bool,
+    pub is_external: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +279,7 @@ impl TranscodeSessionManager {
         video_stream: Option<&MediaStream>,
         _audio_stream: Option<&MediaStream>,
         start_time: f64,
+        burn_subtitle: Option<BurnSubtitle>,
     ) -> Result<Arc<TranscodeSession>, anyhow::Error> {
         // Check global concurrent limit
         {
@@ -240,6 +296,16 @@ impl TranscodeSessionManager {
         let output_dir = self.cache_dir.join(&session_id);
         let video_height = video_stream.and_then(|v| v.height);
 
+        tokio::fs::create_dir_all(&output_dir).await?;
+
+        // Resolve burn-in source into a sanitized path inside the session dir
+        // (avoids all FFmpeg filter-string escaping pitfalls).
+        let burn_resolved = if let Some(ref burn) = burn_subtitle {
+            Some(resolve_burn_source(burn, file_path, &output_dir).await?)
+        } else {
+            None
+        };
+
         let child = Self::spawn_ffmpeg(
             &self.ffmpeg_path,
             file_path,
@@ -247,6 +313,7 @@ impl TranscodeSessionManager {
             mode,
             video_height,
             start_time,
+            burn_resolved.as_ref(),
         )
         .await?;
 
@@ -261,6 +328,9 @@ impl TranscodeSessionManager {
             file_path: file_path.to_string(),
             video_height,
             start_time: RwLock::new(start_time),
+            actual_start_time: RwLock::new(start_time),
+            burn_subtitle,
+            burn_resolved: RwLock::new(burn_resolved),
             ffmpeg_child: RwLock::new(Some(child)),
             last_accessed: RwLock::new(Instant::now()),
             ready_tx,
@@ -272,7 +342,7 @@ impl TranscodeSessionManager {
             .await
             .insert(session_id.clone(), session.clone());
 
-        Self::watch_for_ready(session.clone(), output_dir);
+        Self::watch_for_ready(session.clone(), output_dir, self.ffmpeg_path.clone());
 
         info!(
             "Started {:?} transcode session {} for media {} at {:.0}s",
@@ -310,6 +380,14 @@ impl TranscodeSessionManager {
         // Reset readiness before spawning new FFmpeg
         let _ = session.ready_tx.send(false);
 
+        // Re-resolve burn source (the old symlink is still in the output_dir
+        // but may have been cleared by the segment wipe above).
+        let burn_resolved = if let Some(ref burn) = session.burn_subtitle {
+            Some(resolve_burn_source(burn, &session.file_path, &session.output_dir).await?)
+        } else {
+            None
+        };
+
         // Spawn new FFmpeg from the seek position
         let child = Self::spawn_ffmpeg(
             &self.ffmpeg_path,
@@ -318,14 +396,17 @@ impl TranscodeSessionManager {
             session.mode,
             session.video_height,
             seek_time,
+            burn_resolved.as_ref(),
         )
         .await?;
 
         *session.ffmpeg_child.write().await = Some(child);
         *session.start_time.write().await = seek_time;
+        *session.actual_start_time.write().await = seek_time;
+        *session.burn_resolved.write().await = burn_resolved;
         *session.last_accessed.write().await = Instant::now();
 
-        Self::watch_for_ready(session.clone(), session.output_dir.clone());
+        Self::watch_for_ready(session.clone(), session.output_dir.clone(), self.ffmpeg_path.clone());
 
         info!(
             "Restarted transcode session {} seeking to {:.0}s",
@@ -342,6 +423,7 @@ impl TranscodeSessionManager {
         mode: TranscodeMode,
         video_height: Option<i32>,
         start_time: f64,
+        burn: Option<&BurnResolved>,
     ) -> Result<tokio::process::Child, anyhow::Error> {
         tokio::fs::create_dir_all(output_dir).await?;
 
@@ -357,6 +439,11 @@ impl TranscodeSessionManager {
 
         cmd.arg("-i").arg(file_path);
         cmd.args(["-y", "-nostdin"]);
+
+        // Deterministic stream mapping: always take first video + first audio.
+        // Subtitles are delivered separately as WebVTT; we never include them
+        // in the HLS output, so no -map 0:s.
+        cmd.args(["-map", "0:v:0?", "-map", "0:a:0?"]);
 
         match mode {
             TranscodeMode::Remux => {
@@ -377,25 +464,27 @@ impl TranscodeSessionManager {
                     481..=720 => "8000k",
                     _ => "16000k",
                 };
+                // Build -vf chain: subtitles filter first (if burning), then scale.
+                let scale = format!("scale=-2:{}", height);
+                let vf = if let Some(b) = burn {
+                    let path_str = b.sanitized_source.to_string_lossy();
+                    match b.stream_index {
+                        Some(idx) => format!("subtitles='{}':si={},{}", path_str, idx, scale),
+                        None => format!("subtitles='{}',{}", path_str, scale),
+                    }
+                } else {
+                    scale
+                };
                 cmd.args([
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "fast",
-                    "-crf",
-                    "22",
-                    "-maxrate",
-                    bitrate,
-                    "-bufsize",
-                    bufsize,
-                    "-vf",
-                    &format!("scale=-2:{}", height),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    "-ac",
-                    "2",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "22",
+                    "-maxrate", bitrate,
+                    "-bufsize", bufsize,
+                    "-vf", &vf,
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-ac", "2",
                 ]);
             }
             TranscodeMode::Direct => unreachable!(),
@@ -424,7 +513,16 @@ impl TranscodeSessionManager {
     }
 
     /// Watch for the first HLS segment and signal readiness via the watch channel.
-    fn watch_for_ready(session: Arc<TranscodeSession>, output_dir: PathBuf) {
+    ///
+    /// Note: we intentionally do NOT probe the output segment's PTS. FFmpeg's
+    /// MPEG-TS muxer resets output timestamps (typically starting at ~1.4s of
+    /// buffering), so the output PTS does not represent the original-file
+    /// offset. hls.js further normalizes `video.currentTime=0` to the first
+    /// frame of the playlist, so the offset we need for subtitle alignment is
+    /// exactly the requested `start_time` (set when the session starts or
+    /// when `seek_session` restarts FFmpeg). Keyframe snapping introduces at
+    /// most a GOP-size error, which is tolerable for subtitle timing.
+    fn watch_for_ready(session: Arc<TranscodeSession>, output_dir: PathBuf, _ffmpeg_path: String) {
         tokio::spawn(async move {
             let deadline = Instant::now() + Duration::from_secs(30);
             loop {
@@ -521,6 +619,13 @@ impl TranscodeSessionManager {
         for session in sessions.values() {
             let start_time = *session.start_time.read().await;
             let idle_seconds = session.last_accessed.read().await.elapsed().as_secs();
+            let burned_subtitle = session.burn_subtitle.as_ref().map(|b| BurnedSubtitleDisplay {
+                stream_id: b.stream_id,
+                language: b.language.clone(),
+                title: b.title.clone(),
+                is_forced: b.is_forced,
+                is_external: b.is_external,
+            });
             out.push(ActiveSessionInfo {
                 session_id: session.session_id.clone(),
                 user_id: session.user_id,
@@ -530,6 +635,7 @@ impl TranscodeSessionManager {
                 file_path: session.file_path.clone(),
                 start_time_seconds: start_time,
                 idle_seconds,
+                burned_subtitle,
             });
         }
         out
@@ -546,6 +652,61 @@ impl TranscodeSessionManager {
     }
 }
 
+/// Create a sanitized symlink (or copy) of a burn-in subtitle source into the
+/// session's output_dir so the FFmpeg filter string never contains special chars.
+async fn resolve_burn_source(
+    burn: &BurnSubtitle,
+    video_path: &str,
+    output_dir: &std::path::Path,
+) -> Result<BurnResolved, anyhow::Error> {
+    let (src_path, ext) = if burn.is_external {
+        let ext_path = burn
+            .external_file_path
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("burn subtitle marked external but has no path"))?;
+        let src = PathBuf::from(ext_path);
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("srt")
+            .to_string();
+        (src, ext)
+    } else {
+        // Embedded — FFmpeg reads the video itself; symlink the video path.
+        let src = PathBuf::from(video_path);
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mkv")
+            .to_string();
+        (src, ext)
+    };
+
+    if !src_path.exists() {
+        anyhow::bail!("burn subtitle source does not exist: {:?}", src_path);
+    }
+
+    let dest = output_dir.join(format!("burn_src.{}", ext));
+    let _ = tokio::fs::remove_file(&dest).await;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        if symlink(&src_path, &dest).is_ok() {
+            return Ok(BurnResolved {
+                sanitized_source: dest,
+                stream_index: burn.stream_index,
+            });
+        }
+    }
+    // Fallback: copy (slow for large video files, but ensures correctness).
+    tokio::fs::copy(&src_path, &dest).await?;
+    Ok(BurnResolved {
+        sanitized_source: dest,
+        stream_index: burn.stream_index,
+    })
+}
+
 fn uuid_v4() -> String {
     use rand::RngExt;
     let bytes: Vec<u8> = (0..16).map(|_| rand::rng().random::<u8>()).collect();
@@ -557,4 +718,84 @@ fn uuid_v4() -> String {
         (bytes[8] & 0x3f) | 0x80, bytes[9],
         bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stream(t: &str, codec: &str) -> MediaStream {
+        MediaStream {
+            id: 1,
+            media_item_id: 1,
+            stream_index: 0,
+            stream_type: t.to_string(),
+            codec: Some(codec.to_string()),
+            language: None,
+            title: None,
+            is_default: false,
+            is_forced: false,
+            width: None,
+            height: Some(1080),
+            aspect_ratio: None,
+            frame_rate: None,
+            bit_depth: None,
+            color_space: None,
+            channels: None,
+            sample_rate: None,
+            bit_rate: None,
+            is_external: false,
+            external_file_path: None,
+        }
+    }
+
+    fn caps() -> ClientCapabilities {
+        ClientCapabilities {
+            video_codecs: vec!["h264".into()],
+            audio_codecs: vec!["aac".into()],
+            containers: vec!["mp4".into()],
+        }
+    }
+
+    #[test]
+    fn direct_when_all_compatible() {
+        let streams = vec![stream("video", "h264"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        assert_eq!(mode, TranscodeMode::Direct);
+    }
+
+    #[test]
+    fn burn_forces_full_transcode_even_when_compatible() {
+        let streams = vec![stream("video", "h264"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), true);
+        assert_eq!(mode, TranscodeMode::FullTranscode);
+    }
+
+    #[test]
+    fn remux_when_container_mismatch() {
+        let streams = vec![stream("video", "h264"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), false);
+        assert_eq!(mode, TranscodeMode::Remux);
+    }
+
+    #[test]
+    fn burn_overrides_remux_decision() {
+        let streams = vec![stream("video", "h264"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), true);
+        assert_eq!(mode, TranscodeMode::FullTranscode);
+    }
+
+    #[test]
+    fn audio_transcode_when_audio_incompatible() {
+        let streams = vec![stream("video", "h264"), stream("audio", "ac3")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        assert_eq!(mode, TranscodeMode::AudioTranscode);
+    }
+
+    #[test]
+    fn full_transcode_when_video_incompatible() {
+        let streams = vec![stream("video", "hevc"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        assert_eq!(mode, TranscodeMode::FullTranscode);
+    }
 }

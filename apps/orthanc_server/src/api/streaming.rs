@@ -48,6 +48,12 @@ pub fn hls_router() -> Router<Arc<AppState>> {
     Router::new().route("/{session_id}/{*path}", get(serve_hls))
 }
 
+/// Subtitle WebVTT serving (mounted under /api/subtitles).
+/// Auth is via query-param stream token (same as HLS).
+pub fn subtitles_router() -> Router<Arc<AppState>> {
+    Router::new().route("/{stream_filename}", get(serve_subtitle))
+}
+
 // ---------------------------------------------------------------------------
 // Stream token
 // ---------------------------------------------------------------------------
@@ -67,6 +73,22 @@ struct StreamTokenRequest {
     /// Container formats the client can play (e.g. ["mp4", "webm"])
     #[serde(default)]
     supported_containers: Vec<String>,
+    /// If set, force FullTranscode and burn this subtitle into the video.
+    #[serde(default)]
+    burn_subtitle_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct SubtitleTrackOut {
+    id: i64,
+    language: Option<String>,
+    title: Option<String>,
+    codec: Option<String>,
+    is_default: bool,
+    is_forced: bool,
+    is_external: bool,
+    /// "vtt" | "burn_required"
+    delivery: &'static str,
 }
 
 #[derive(Serialize)]
@@ -78,6 +100,15 @@ struct StreamTokenResponse {
     duration_seconds: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transcode_session_id: Option<String>,
+    #[serde(default)]
+    subtitles: Vec<SubtitleTrackOut>,
+    /// When a burn was requested, echoes the honored subtitle id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    burned_subtitle_id: Option<i64>,
+    /// Actual start-time PTS of the first HLS segment (populated for HLS modes
+    /// once the segment is produced). Used as the subtitle offset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transcode_actual_start_seconds: Option<f64>,
 }
 
 async fn create_stream_token(
@@ -120,7 +151,24 @@ async fn create_stream_token(
         audio_codecs: body.supported_audio_codecs,
         containers: body.supported_containers,
     };
-    let mode = transcoding::decide_transcode_mode(&streams, item.container_format.as_deref(), &client_caps);
+
+    // Resolve burn request (if any) before picking a mode — a burn forces FullTranscode.
+    let mut burn_stream: Option<MediaStream> = None;
+    if let Some(burn_id) = body.burn_subtitle_id {
+        let s = streams
+            .iter()
+            .find(|s| s.id == burn_id && s.stream_type == "subtitle")
+            .cloned()
+            .ok_or_else(|| ApiError::BadRequest("burn_subtitle_id does not match a subtitle stream for this item".into()))?;
+        burn_stream = Some(s);
+    }
+
+    let mode = transcoding::decide_transcode_mode(
+        &streams,
+        item.container_format.as_deref(),
+        &client_caps,
+        burn_stream.is_some(),
+    );
 
     // Generate token
     let token = {
@@ -129,48 +177,63 @@ async fn create_stream_token(
         hex::encode(bytes)
     };
 
-    let (stream_url, transcode_session_id) = if mode == transcoding::TranscodeMode::Direct {
-        (
-            format!("/api/stream/{}?token={}", body.media_item_id, token),
-            None,
-        )
-    } else {
-        // Start transcode session
-        let video_stream = streams.iter().find(|s| s.stream_type == "video");
-        let audio_stream = streams.iter().find(|s| s.stream_type == "audio");
+    // Pre-warm subtitle extraction during the long path (transcode warmup).
+    // For direct play, this runs in parallel with token insertion; for HLS,
+    // it overlaps with the 30-second wait_until_ready window.
+    let prewarm_handle = spawn_subtitle_prewarm(state.clone(), streams.clone(), file_path.clone());
 
-        let session = state
-            .transcode_manager
-            .start_session(
-                user_id,
-                body.media_item_id,
-                &file_path,
-                mode,
-                video_stream,
-                audio_stream,
-                body.start_time,
+    let (stream_url, transcode_session_id, actual_start_seconds) =
+        if mode == transcoding::TranscodeMode::Direct {
+            (
+                format!("/api/stream/{}?token={}", body.media_item_id, token),
+                None,
+                None,
             )
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("Maximum concurrent transcodes") {
-                    ApiError::TooManyRequests("Too many active streams. Please stop playback on another device or try again shortly.".into())
-                } else {
-                    ApiError::Internal(anyhow::anyhow!("Transcode start failed: {}", e))
-                }
-            })?;
+        } else {
+            // Start transcode session
+            let video_stream = streams.iter().find(|s| s.stream_type == "video");
+            let audio_stream = streams.iter().find(|s| s.stream_type == "audio");
 
-        // Wait for first segment (with timeout)
-        let sid = session.session_id.clone();
-        if !session.wait_until_ready(std::time::Duration::from_secs(30)).await {
-            tracing::warn!("Timed out waiting for transcode to produce first segment");
-        }
+            let burn = build_burn_option(&state, burn_stream.as_ref(), &file_path).await?;
 
-        (
-            format!("/api/hls/{}/stream.m3u8?token={}", sid, token),
-            Some(sid),
-        )
-    };
+            let session = state
+                .transcode_manager
+                .start_session(
+                    user_id,
+                    body.media_item_id,
+                    &file_path,
+                    mode,
+                    video_stream,
+                    audio_stream,
+                    body.start_time,
+                    burn,
+                )
+                .await
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("Maximum concurrent transcodes") {
+                        ApiError::TooManyRequests("Too many active streams. Please stop playback on another device or try again shortly.".into())
+                    } else {
+                        ApiError::Internal(anyhow::anyhow!("Transcode start failed: {}", e))
+                    }
+                })?;
+
+            // Wait for first segment (with timeout)
+            let sid = session.session_id.clone();
+            if !session.wait_until_ready(std::time::Duration::from_secs(30)).await {
+                tracing::warn!("Timed out waiting for transcode to produce first segment");
+            }
+            let actual = *session.actual_start_time.read().await;
+            let actual_opt = if actual > 0.0 { Some(actual) } else { None };
+
+            (
+                format!("/api/hls/{}/stream.m3u8?token={}", sid, token),
+                Some(sid),
+                actual_opt,
+            )
+        };
+    // Best-effort pre-warm; we don't block on it here.
+    drop(prewarm_handle);
 
     let data = StreamTokenData {
         user_id,
@@ -189,6 +252,9 @@ async fn create_stream_token(
         .await
         .retain(|_, v| v.expires_at > now);
 
+    let subtitles_out = build_subtitle_list(&streams);
+    let burned_subtitle_id = burn_stream.as_ref().map(|s| s.id);
+
     Ok(Json(StreamTokenResponse {
         token,
         stream_url,
@@ -196,6 +262,85 @@ async fn create_stream_token(
         title: item.title.clone(),
         duration_seconds: item.duration_seconds,
         transcode_session_id,
+        subtitles: subtitles_out,
+        burned_subtitle_id,
+        transcode_actual_start_seconds: actual_start_seconds,
+    }))
+}
+
+fn build_subtitle_list(streams: &[MediaStream]) -> Vec<SubtitleTrackOut> {
+    let mut out = Vec::new();
+    for s in streams {
+        if s.stream_type != "subtitle" {
+            continue;
+        }
+        let delivery = match crate::subtitles::classify(s) {
+            crate::subtitles::DeliveryMethod::Vtt => "vtt",
+            crate::subtitles::DeliveryMethod::BurnRequired => "burn_required",
+            crate::subtitles::DeliveryMethod::Unsupported => continue,
+        };
+        out.push(SubtitleTrackOut {
+            id: s.id,
+            language: s.language.clone(),
+            title: s.title.clone(),
+            codec: s.codec.clone(),
+            is_default: s.is_default,
+            is_forced: s.is_forced,
+            is_external: s.is_external,
+            delivery,
+        });
+    }
+    out
+}
+
+/// Spawn a background task that pre-extracts WebVTT for every text-deliverable
+/// subtitle stream. Best-effort — errors are logged but not surfaced.
+fn spawn_subtitle_prewarm(
+    state: Arc<AppState>,
+    streams: Vec<MediaStream>,
+    file_path: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        for s in &streams {
+            if crate::subtitles::classify(s) != crate::subtitles::DeliveryMethod::Vtt {
+                continue;
+            }
+            if let Err(e) = state.subtitle_manager.extract_vtt(s, &file_path).await {
+                tracing::debug!("Subtitle pre-warm failed for stream {}: {}", s.id, e);
+            }
+        }
+    })
+}
+
+/// Build a burn option from the selected subtitle and (for embedded streams)
+/// also return the sanitized source path. For bitmap-required burns (PGS), we
+/// currently return a clear error rather than attempt an overlay graph.
+async fn build_burn_option(
+    _state: &Arc<AppState>,
+    burn_stream: Option<&MediaStream>,
+    _video_path: &str,
+) -> Result<Option<transcoding::BurnSubtitle>, ApiError> {
+    let Some(stream) = burn_stream else {
+        return Ok(None);
+    };
+    // Only text codecs are supported for burn-in in the MVP.
+    let is_text = matches!(
+        stream.codec.as_deref().map(str::to_lowercase).as_deref(),
+        Some("subrip" | "srt" | "webvtt" | "vtt" | "mov_text" | "ass" | "ssa" | "text")
+    );
+    if !is_text {
+        return Err(ApiError::BadRequest(
+            "bitmap subtitle burn-in (PGS/VobSub/DVB) is not yet supported".into(),
+        ));
+    }
+    Ok(Some(transcoding::BurnSubtitle {
+        stream_id: stream.id,
+        stream_index: if stream.is_external { None } else { Some(stream.stream_index) },
+        external_file_path: stream.external_file_path.clone(),
+        language: stream.language.clone(),
+        title: stream.title.clone(),
+        is_forced: stream.is_forced,
+        is_external: stream.is_external,
     }))
 }
 
@@ -213,6 +358,8 @@ struct TranscodeSeekRequest {
 struct TranscodeSeekResponse {
     ready: bool,
     seek_time: f64,
+    /// True PTS of the first segment after restart — use as subtitle offset.
+    actual_start_seconds: f64,
 }
 
 async fn transcode_seek(
@@ -229,10 +376,12 @@ async fn transcode_seek(
     let ready = session
         .wait_until_ready(std::time::Duration::from_secs(30))
         .await;
+    let actual = *session.actual_start_time.read().await;
 
     Ok(Json(TranscodeSeekResponse {
         ready,
         seek_time: body.seek_time,
+        actual_start_seconds: actual,
     }))
 }
 
@@ -695,4 +844,104 @@ async fn get_progress(
         position_seconds,
         is_completed,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Subtitle serving
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SubtitleQuery {
+    token: Option<String>,
+    /// Offset (in seconds) to subtract from every cue timestamp. Used by the
+    /// player during HLS playback to align cue times with the transcoded
+    /// playlist, which starts at `actual_start_time`.
+    #[serde(default)]
+    offset: f64,
+}
+
+async fn serve_subtitle(
+    State(state): State<Arc<AppState>>,
+    Path(stream_filename): Path<String>,
+    Query(query): Query<SubtitleQuery>,
+) -> Result<Response, ApiError> {
+    // Parse `<stream_id>.vtt` from the path segment.
+    let stream_id: i64 = stream_filename
+        .strip_suffix(".vtt")
+        .ok_or(ApiError::BadRequest("expected <id>.vtt".into()))?
+        .parse()
+        .map_err(|_| ApiError::BadRequest("invalid stream id".into()))?;
+
+    // Token validation mirrors serve_hls: lenient — validate if present.
+    // We also require the token's media_item match this subtitle's item, so
+    // clients can't use a random stream token to pull subtitles for other items.
+    let token_media_id: Option<i64> = if let Some(ref token) = query.token {
+        let tokens = state.stream_tokens.read().await;
+        let data = tokens.get(token).ok_or(ApiError::Unauthorized)?;
+        if data.expires_at < chrono::Utc::now() {
+            return Err(ApiError::Unauthorized);
+        }
+        Some(data.media_item_id)
+    } else {
+        None
+    };
+
+    // Load the subtitle stream row and its parent media item.
+    let stream = sqlx::query_as::<_, crate::models::media_stream::MediaStream>(
+        "SELECT * FROM media_streams WHERE id = ? AND stream_type = 'subtitle'",
+    )
+    .bind(stream_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?
+    .ok_or(ApiError::NotFound("subtitle stream not found".into()))?;
+
+    if let Some(tok_id) = token_media_id {
+        if tok_id != stream.media_item_id {
+            return Err(ApiError::Unauthorized);
+        }
+    }
+
+    let item = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
+        .bind(stream.media_item_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(anyhow::Error::from)?
+        .ok_or(ApiError::NotFound("media item not found".into()))?;
+
+    let file_path = item
+        .file_path
+        .as_deref()
+        .ok_or(ApiError::NotFound("media item has no file".into()))?;
+
+    let body = state
+        .subtitle_manager
+        .vtt_with_offset(&stream, file_path, query.offset)
+        .await
+        .map_err(|e| match e {
+            crate::subtitles::SubtitleError::StreamNotFound => {
+                ApiError::NotFound("subtitle source missing".into())
+            }
+            crate::subtitles::SubtitleError::DeliveryUnsupported => ApiError::BadRequest(
+                "this subtitle cannot be served as WebVTT (bitmap); request burn-in instead".into(),
+            ),
+            crate::subtitles::SubtitleError::PathOutsideLibrary(p) => {
+                tracing::warn!("Refusing subtitle path outside library: {}", p);
+                ApiError::Forbidden
+            }
+            crate::subtitles::SubtitleError::CacheEmpty | crate::subtitles::SubtitleError::Ffmpeg(_) => {
+                tracing::warn!("Subtitle extraction failed: {}", e);
+                ApiError::Internal(anyhow::anyhow!("subtitle extraction failed"))
+            }
+            crate::subtitles::SubtitleError::Io(s) => {
+                ApiError::Internal(anyhow::anyhow!("subtitle i/o: {}", s))
+            }
+        })?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/vtt; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(body))
+        .unwrap())
 }

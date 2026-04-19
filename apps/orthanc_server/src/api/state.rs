@@ -1,5 +1,6 @@
 use crate::db::DbPool;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -29,10 +30,29 @@ pub struct AppState {
     pub ffprobe_path: String,
     pub transcode_cache_dir: String,
     pub transcode_manager: Arc<crate::transcoding::TranscodeSessionManager>,
+    // Subtitles
+    pub subtitle_cache_dir: String,
+    pub subtitle_cache_max_bytes: u64,
+    pub subtitle_manager: Arc<crate::subtitles::SubtitleManager>,
 }
 
 impl AppState {
+    /// Build AppState using env vars for paths and the DB to resolve library roots.
+    pub async fn from_env_async(db: DbPool) -> Self {
+        let library_roots = load_library_roots(&db).await;
+        Self::from_env_with_roots(db, library_roots)
+    }
+
+    pub fn from_env_with_roots(db: DbPool, library_roots: Vec<PathBuf>) -> Self {
+        Self::build(db, library_roots)
+    }
+
+    #[cfg(test)]
     pub fn from_env(db: DbPool) -> Self {
+        Self::build(db, Vec::new())
+    }
+
+    fn build(db: DbPool, library_roots: Vec<PathBuf>) -> Self {
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set, using random secret (not suitable for production)");
             use rand::RngExt;
@@ -95,6 +115,20 @@ impl AppState {
             max_concurrent_transcodes,
         ));
 
+        let subtitle_cache_dir = std::env::var("SUBTITLE_CACHE_DIR")
+            .unwrap_or_else(|_| "./subtitle_cache".to_string());
+        let subtitle_cache_max_mb = std::env::var("SUBTITLE_CACHE_MAX_MB")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(500);
+        let subtitle_cache_max_bytes = subtitle_cache_max_mb.saturating_mul(1_024 * 1_024);
+
+        let subtitle_manager = Arc::new(crate::subtitles::SubtitleManager::new(
+            PathBuf::from(&subtitle_cache_dir),
+            ffmpeg_path.clone(),
+            library_roots,
+        ));
+
         Self {
             db,
             jwt_secret,
@@ -117,6 +151,34 @@ impl AppState {
             ffprobe_path,
             transcode_cache_dir,
             transcode_manager,
+            subtitle_cache_dir,
+            subtitle_cache_max_bytes,
+            subtitle_manager,
         }
     }
+}
+
+async fn load_library_roots(db: &DbPool) -> Vec<PathBuf> {
+    let rows: Vec<(String,)> =
+        match sqlx::query_as("SELECT DISTINCT path FROM library_paths WHERE is_enabled = 1")
+            .fetch_all(db)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!("Failed to load library_paths for subtitle security: {}", e);
+                return Vec::new();
+            }
+        };
+    rows.into_iter()
+        .filter_map(|(p,)| {
+            let path = PathBuf::from(&p);
+            if path.exists() {
+                Some(path)
+            } else {
+                tracing::warn!("Library path '{}' does not exist; skipping for subtitle roots", p);
+                None
+            }
+        })
+        .collect()
 }
