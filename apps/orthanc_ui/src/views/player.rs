@@ -217,28 +217,6 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
-    let skip_back = move |_| {
-        if seeking() { return; }
-        let new_time = (current_time() - 10.0).max(0.0);
-        current_time.set(new_time);
-        if transcode_session_id().is_none() {
-            if let Some(video) = get_video() {
-                video.set_current_time(new_time);
-            }
-        }
-    };
-
-    let skip_forward = move |_| {
-        if seeking() { return; }
-        let new_time = (current_time() + 10.0).min(duration());
-        current_time.set(new_time);
-        if transcode_session_id().is_none() {
-            if let Some(video) = get_video() {
-                video.set_current_time(new_time);
-            }
-        }
-    };
-
     let toggle_mute = move |_| {
         if let Some(video) = get_video() {
             if video.volume() > 0.0 {
@@ -251,12 +229,116 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
+    // Shared seek-to-time logic for both slider and skip buttons
+    let mut seek_to = move |t: f64| {
+        if seeking() { return; }
+        current_time.set(t);
+
+        if let Some(ref session_id) = transcode_session_id() {
+            let was_playing = is_playing();
+            if let Some(video) = get_video() {
+                video.pause().ok();
+            }
+            is_playing.set(false);
+            seeking.set(true);
+
+            let session_id = session_id.clone();
+            let tk = stream_token();
+            spawn(async move {
+                let seek_result = with_refresh(auth, {
+                    let sid = session_id.clone();
+                    move |token| {
+                        let sid = sid.clone();
+                        async move {
+                            api::transcode_seek(&token, &sid, t).await
+                        }
+                    }
+                })
+                .await;
+
+                match seek_result {
+                    Ok(resp) if resp.ready => {
+                        hls_time_offset.set(resp.seek_time);
+                        let cache_bust = js_sys::Date::now() as u64;
+                        let auto_play = if was_playing { "true" } else { "false" };
+                        let js = format!(
+                            "(function() {{ \
+                                if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                var video = document.getElementById('orthanc-player'); \
+                                if (!video) return; \
+                                window._orthanc_seek_done = false; \
+                                var cb = '{}'; \
+                                var autoPlay = {}; \
+                                var hls = new Hls({{ \
+                                    startPosition: 0, \
+                                    xhrSetup: function(xhr, url) {{ \
+                                        var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                        if (url.indexOf('token=') === -1) {{ \
+                                            url = url + sep + 'token={}' + '&_cb=' + cb; \
+                                        }} else {{ \
+                                            url = url + '&_cb=' + cb; \
+                                        }} \
+                                        xhr.open('GET', url, true); \
+                                    }} \
+                                }}); \
+                                var hlsUrl = video.dataset.hlsUrl || video.src; \
+                                var urlSep = hlsUrl.indexOf('?') === -1 ? '?' : '&'; \
+                                hls.loadSource(hlsUrl + urlSep + '_cb=' + cb); \
+                                hls.attachMedia(video); \
+                                hls.on(Hls.Events.MANIFEST_PARSED, function() {{ \
+                                    if (autoPlay) {{ video.play(); }} \
+                                    window._orthanc_seek_done = true; \
+                                }}); \
+                                window._orthanc_hls = hls; \
+                            }})()",
+                            cache_bust, auto_play, tk
+                        );
+                        let _ = js_sys::eval(&js);
+
+                        let poll_start = js_sys::Date::now();
+                        loop {
+                            let done = js_sys::eval("window._orthanc_seek_done === true")
+                                .ok()
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if done { break; }
+                            if js_sys::Date::now() - poll_start > 10_000.0 { break; }
+                            let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
+                                let _ = web_sys::window().unwrap()
+                                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100);
+                            });
+                            let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                        }
+
+                        last_seek_time.set(t);
+                    }
+                    _ => {}
+                }
+
+                seeking.set(false);
+            });
+        } else {
+            if let Some(video) = get_video() {
+                video.set_current_time(t);
+            }
+        }
+    };
+
+    let skip_back = move |_| {
+        let new_time = (current_time() - 10.0).max(0.0);
+        seek_to(new_time);
+    };
+
+    let skip_forward = move |_| {
+        let new_time = (current_time() + 10.0).min(duration());
+        seek_to(new_time);
+    };
+
     // Update visual position while dragging (no server call)
     let on_seek_input = move |evt: Event<FormData>| {
         if seeking() { return; }
         if let Ok(t) = evt.value().parse::<f64>() {
             current_time.set(t);
-            // For direct mode, seek immediately
             if transcode_session_id().is_none() {
                 if let Some(video) = get_video() {
                     video.set_current_time(t);
@@ -265,121 +347,14 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
-    // Commit seek on slider release (onchange fires once on mouseup)
+    // Commit seek on slider release
     let on_seek_commit = move |evt: Event<FormData>| {
-        // Guard: ignore onchange while a seek is already in flight
-        if seeking() { return; }
-
         if let Ok(t) = evt.value().parse::<f64>() {
-            // Debounce: skip if the target is within 10s of the last seek
-            // (catches spurious onchange from programmatic slider value updates)
+            // Debounce spurious onchange for transcoded streams
             if transcode_session_id().is_some() && (t - last_seek_time()).abs() < 10.0 {
                 return;
             }
-            current_time.set(t);
-
-            if let Some(ref session_id) = transcode_session_id() {
-                // Remember play state before pausing for the seek
-                let was_playing = is_playing();
-                if let Some(video) = get_video() {
-                    video.pause().ok();
-                }
-                is_playing.set(false);
-                seeking.set(true);
-
-                let session_id = session_id.clone();
-                let tk = stream_token();
-                spawn(async move {
-                    // Server waits until FFmpeg produces first segment before responding
-                    let seek_result = with_refresh(auth, {
-                        let sid = session_id.clone();
-                        move |token| {
-                            let sid = sid.clone();
-                            async move {
-                                api::transcode_seek(&token, &sid, t).await
-                            }
-                        }
-                    })
-                    .await;
-
-                    match seek_result {
-                        Ok(resp) if resp.ready => {
-                            // Update time offset: video timestamps are zero-based,
-                            // add this offset to get real media position
-                            hls_time_offset.set(resp.seek_time);
-
-                            // Cache-bust: append unique query param so hls.js
-                            // fetches fresh manifest and segments after seek
-                            let cache_bust = js_sys::Date::now() as u64;
-
-                            // Reload hls.js immediately -- segments are already ready
-                            let auto_play = if was_playing { "true" } else { "false" };
-                            let js = format!(
-                                "(function() {{ \
-                                    if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
-                                    var video = document.getElementById('orthanc-player'); \
-                                    if (!video) return; \
-                                    window._orthanc_seek_done = false; \
-                                    var cb = '{}'; \
-                                    var autoPlay = {}; \
-                                    var hls = new Hls({{ \
-                                        startPosition: 0, \
-                                        xhrSetup: function(xhr, url) {{ \
-                                            var sep = url.indexOf('?') === -1 ? '?' : '&'; \
-                                            if (url.indexOf('token=') === -1) {{ \
-                                                url = url + sep + 'token={}' + '&_cb=' + cb; \
-                                            }} else {{ \
-                                                url = url + '&_cb=' + cb; \
-                                            }} \
-                                            xhr.open('GET', url, true); \
-                                        }} \
-                                    }}); \
-                                    var hlsUrl = video.dataset.hlsUrl || video.src; \
-                                    var urlSep = hlsUrl.indexOf('?') === -1 ? '?' : '&'; \
-                                    hls.loadSource(hlsUrl + urlSep + '_cb=' + cb); \
-                                    hls.attachMedia(video); \
-                                    hls.on(Hls.Events.MANIFEST_PARSED, function() {{ \
-                                        if (autoPlay) {{ video.play(); }} \
-                                        window._orthanc_seek_done = true; \
-                                    }}); \
-                                    window._orthanc_hls = hls; \
-                                }})()",
-                                cache_bust, auto_play, tk
-                            );
-                            let _ = js_sys::eval(&js);
-
-                            // Poll until hls.js signals it's ready (MANIFEST_PARSED fired),
-                            // with a 10-second timeout to avoid hanging forever
-                            let poll_start = js_sys::Date::now();
-                            loop {
-                                let done = js_sys::eval("window._orthanc_seek_done === true")
-                                    .ok()
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                if done { break; }
-                                if js_sys::Date::now() - poll_start > 10_000.0 { break; }
-                                let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
-                                    let _ = web_sys::window().unwrap()
-                                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100);
-                                });
-                                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-                            }
-
-                            last_seek_time.set(t);
-                        }
-                        _ => {
-                            // Seek timed out or failed
-                        }
-                    }
-
-                    // Clear seeking flag now that hls.js has parsed the manifest
-                    seeking.set(false);
-                });
-            } else {
-                if let Some(video) = get_video() {
-                    video.set_current_time(t);
-                }
-            }
+            seek_to(t);
         }
     };
 
@@ -594,17 +569,17 @@ pub fn Player(id: i64) -> Element {
                                         r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>"#
                                     },
                                 }
-                                // Skip back 10s
+                                // Skip back 10s (Material Design replay_10)
                                 button {
                                     class: "player-icon-btn player-skip-btn",
                                     onclick: skip_back,
-                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 110 18 9 9 0 010-18m0 2a7 7 0 100 14 7 7 0 000-14" opacity="0"/><path d="M11.5 3C6.25 3 2 7.25 2 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5.5 1.5L2 3.5 2 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.5" font-size="7.5" font-weight="700" text-anchor="middle" font-family="Arial,sans-serif" fill="currentColor">10</text><path d="M12.5 3a9.5 9.5 0 110 19 9.5 9.5 0 010-19" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="0 15 999"/></svg>"#,
+                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99,5V1l-5,5l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6s-6-2.69-6-6h-2c0,4.42,3.58,8,8,8s8-3.58,8-8S16.41,5,11.99,5z"/><path d="M10.89,16h-0.85v-3.26l-1.01,0.31v-0.69l1.77-0.63h0.09V16z"/><path d="M15.17,14.24c0,0.32-0.03,0.6-0.1,0.82s-0.17,0.42-0.29,0.57s-0.28,0.26-0.45,0.33s-0.37,0.1-0.59,0.1s-0.41-0.03-0.59-0.1s-0.33-0.18-0.46-0.33s-0.23-0.34-0.3-0.57s-0.11-0.5-0.11-0.82V13.5c0-0.32,0.03-0.6,0.1-0.82s0.17-0.42,0.29-0.57s0.28-0.26,0.45-0.33s0.37-0.1,0.59-0.1s0.41,0.03,0.59,0.1c0.18,0.07,0.33,0.18,0.46,0.33s0.23,0.34,0.3,0.57s0.11,0.5,0.11,0.82V14.24z M14.32,13.38c0-0.19-0.01-0.35-0.04-0.48s-0.07-0.23-0.12-0.31s-0.11-0.14-0.19-0.17s-0.16-0.05-0.25-0.05s-0.18,0.02-0.25,0.05s-0.14,0.09-0.19,0.17s-0.09,0.18-0.12,0.31s-0.04,0.29-0.04,0.48v0.97c0,0.19,0.01,0.35,0.04,0.48s0.07,0.24,0.12,0.32s0.11,0.14,0.19,0.17s0.16,0.05,0.25,0.05s0.18-0.02,0.25-0.05s0.14-0.09,0.19-0.17s0.09-0.19,0.11-0.32s0.04-0.29,0.04-0.48V13.38z"/></svg>"#,
                                 }
-                                // Skip forward 10s
+                                // Skip forward 10s (Material Design forward_10)
                                 button {
                                     class: "player-icon-btn player-skip-btn",
                                     onclick: skip_forward,
-                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 110 18 9 9 0 010-18m0 2a7 7 0 100 14 7 7 0 000-14" opacity="0"/><path d="M12.5 3C17.75 3 22 7.25 22 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 1.5L22 3.5 22 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.5" font-size="7.5" font-weight="700" text-anchor="middle" font-family="Arial,sans-serif" fill="currentColor">10</text><path d="M12.5 3a9.5 9.5 0 100 19 9.5 9.5 0 000-19" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="0 15 999"/></svg>"#,
+                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18,13c0,3.31-2.69,6-6,6s-6-2.69-6-6s2.69-6,6-6v4l5-5l-5-5v4c-4.42,0-8,3.58-8,8c0,4.42,3.58,8,8,8s8-3.58,8-8H18z"/><polygon points="10.86,15.94 10.86,11.67 10.77,11.67 9,12.3 9,12.99 10.01,12.68 10.01,15.94"/><path d="M12.25,13.44v0.74c0,1.9,1.31,1.82,1.44,1.82c0.14,0,1.44,0.09,1.44-1.82v-0.74c0-1.9-1.31-1.82-1.44-1.82C13.55,11.62,12.25,11.53,12.25,13.44z M14.29,13.32v0.97c0,0.77-0.21,1.03-0.59,1.03c-0.38,0-0.6-0.26-0.6-1.03v-0.97c0-0.75,0.22-1.01,0.59-1.01C14.07,12.3,14.29,12.57,14.29,13.32z"/></svg>"#,
                                 }
                                 // Volume
                                 div { class: "player-volume-group",
