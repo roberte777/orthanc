@@ -76,6 +76,7 @@ pub fn AppShell() -> Element {
                         if is_admin {
                             Link { to: Route::AdminLibraries {}, class: "nav-link", "Libraries" }
                             Link { to: Route::AdminUsers {}, class: "nav-link", "Users" }
+                            Link { to: Route::AdminPlayback {}, class: "nav-link", "Streams" }
                             Link { to: Route::AdminSettings {}, class: "nav-link", "Settings" }
                         }
                     }

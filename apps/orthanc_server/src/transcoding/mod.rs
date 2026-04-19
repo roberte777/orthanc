@@ -143,6 +143,19 @@ impl TranscodeSession {
     }
 }
 
+/// Snapshot of a live transcode session for admin observability.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ActiveSessionInfo {
+    pub session_id: String,
+    pub user_id: i64,
+    pub media_item_id: i64,
+    pub mode: &'static str,
+    pub video_height: Option<i32>,
+    pub file_path: String,
+    pub start_time_seconds: f64,
+    pub idle_seconds: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Session manager
 // ---------------------------------------------------------------------------
@@ -499,6 +512,27 @@ impl TranscodeSessionManager {
             debug!("Cleaning up stale transcode session {}", id);
             self.stop_session(id).await;
         }
+    }
+
+    /// Snapshot of currently-active transcode sessions, for admin observability.
+    pub async fn list_sessions(&self) -> Vec<ActiveSessionInfo> {
+        let sessions = self.sessions.read().await;
+        let mut out = Vec::with_capacity(sessions.len());
+        for session in sessions.values() {
+            let start_time = *session.start_time.read().await;
+            let idle_seconds = session.last_accessed.read().await.elapsed().as_secs();
+            out.push(ActiveSessionInfo {
+                session_id: session.session_id.clone(),
+                user_id: session.user_id,
+                media_item_id: session.media_item_id,
+                mode: session.mode.as_str(),
+                video_height: session.video_height,
+                file_path: session.file_path.clone(),
+                start_time_seconds: start_time,
+                idle_seconds,
+            });
+        }
+        out
     }
 
     pub async fn stop_all(&self) {

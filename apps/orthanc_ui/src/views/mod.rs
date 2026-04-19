@@ -1,4 +1,5 @@
 pub mod admin_libraries;
+pub mod admin_playback;
 pub mod admin_settings;
 pub mod admin_users;
 pub mod app_shell;

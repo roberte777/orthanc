@@ -435,6 +435,30 @@ pub async fn stop_transcode(token: &str, session_id: &str) -> Result<(), String>
     }
 }
 
+// ── Admin: playback observability ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActiveStreamRow {
+    pub session_id: String,
+    pub user_id: i64,
+    pub media_item_id: i64,
+    pub mode: String,
+    pub video_height: Option<i32>,
+    pub file_path: String,
+    pub start_time_seconds: f64,
+    pub idle_seconds: u64,
+    pub username: Option<String>,
+    pub media_title: Option<String>,
+}
+
+pub async fn list_active_streams(token: &str) -> Result<Vec<ActiveStreamRow>, String> {
+    get_json("/api/admin/playback/sessions", Some(token)).await
+}
+
+pub async fn stop_active_stream(token: &str, session_id: &str) -> Result<(), String> {
+    delete_req(&format!("/api/admin/playback/sessions/{}", session_id), Some(token)).await
+}
+
 pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) -> Result<(), String> {
     let body = serde_json::json!({"position_seconds": position_seconds});
     let url = format!("{}/api/media/{}/progress", API_BASE, media_id);

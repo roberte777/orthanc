@@ -1992,17 +1992,3 @@ a {
   to { transform: rotate(360deg); }
 }
 
-/* ── Transcode badge ── */
-.player-transcode-badge {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  background: rgba(229, 9, 20, 0.8);
-  color: #fff;
-  padding: 0.25rem 0.6rem;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  z-index: 15;
-}

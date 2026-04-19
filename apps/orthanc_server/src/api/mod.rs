@@ -4,6 +4,7 @@ use std::sync::Arc;
 pub mod error;
 pub mod state;
 
+pub mod admin_playback;
 pub mod auth;
 pub mod libraries;
 pub mod media;
@@ -20,6 +21,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/setup-status", axum::routing::get(setup_status))
         .nest("/api/auth", auth::router())
         .nest("/api/admin/users", users::router())
+        .nest("/api/admin/playback", admin_playback::router())
         .nest("/api/settings", settings::user_router())
         .nest("/api/admin/settings", settings::admin_router())
         .nest("/api/admin/libraries", libraries::router())

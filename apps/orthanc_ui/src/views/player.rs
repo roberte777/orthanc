@@ -581,11 +581,6 @@ pub fn Player(id: i64) -> Element {
                     },
                 }
 
-                // Transcode mode indicator
-                if !is_direct {
-                    div { class: "player-transcode-badge", "{stream_mode}" }
-                }
-
                 // Center spinner (only when buffering/seeking)
                 if seeking() || is_buffering() {
                     div { class: "player-center-overlay",

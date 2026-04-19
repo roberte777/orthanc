@@ -8,6 +8,7 @@ mod views;
 
 use views::{
     admin_libraries::AdminLibraries,
+    admin_playback::AdminPlayback,
     admin_settings::AdminSettings,
     admin_users::AdminUsers,
     app_shell::AppShell,
@@ -46,6 +47,8 @@ enum Route {
         AdminLibraries {},
         #[route("/admin/users")]
         AdminUsers {},
+        #[route("/admin/playback")]
+        AdminPlayback {},
         #[route("/admin/settings")]
         AdminSettings {},
 }
