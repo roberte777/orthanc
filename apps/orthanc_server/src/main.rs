@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 
+    let state_for_shutdown = state.clone();
     let app = api::router(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors);
@@ -78,11 +79,13 @@ async fn main() -> anyhow::Result<()> {
     info!("Listening on {}", bind_addr);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
+    let shutdown_manager = state_for_shutdown.transcode_manager.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
     info!("Shutting down server");
+    shutdown_manager.stop_all().await;
     db::close_pool(pool).await;
 
     Ok(())

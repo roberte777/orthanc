@@ -57,6 +57,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 futures-core = "0.3"
 
 # Web APIs
-web-sys = { version = "0.3", features = ["Window", "Storage", "HtmlVideoElement", "HtmlMediaElement", "Document", "HtmlElement", "Element", "Event", "TimeRanges"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "HtmlVideoElement", "HtmlMediaElement", "Document", "HtmlElement", "Element", "Event", "TimeRanges", "KeyboardEvent", "EventTarget"] }
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"

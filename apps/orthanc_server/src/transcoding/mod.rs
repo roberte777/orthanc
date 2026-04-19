@@ -155,6 +155,42 @@ pub struct TranscodeSessionManager {
 
 impl TranscodeSessionManager {
     pub fn new(cache_dir: PathBuf, ffmpeg_path: String, max_concurrent: usize) -> Self {
+        // Any pre-existing contents are orphaned sessions from a previous process —
+        // transcode sessions live only in memory, so nothing here can still be ours.
+        if cache_dir.exists() {
+            info!("Clearing stale transcode cache at {:?} (may take a while)", cache_dir);
+            let start = Instant::now();
+            // remove_dir_all can race with the OS on large trees (macOS APFS,
+            // Spotlight, fseventsd) and return ENOTEMPTY. Retry a few times.
+            let mut last_err = None;
+            for attempt in 1..=5 {
+                match std::fs::remove_dir_all(&cache_dir) {
+                    Ok(()) => {
+                        info!(
+                            "Transcode cache cleared in {:.1}s (attempt {})",
+                            start.elapsed().as_secs_f64(),
+                            attempt
+                        );
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if !cache_dir.exists() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                warn!("Failed to clear stale transcode cache at {:?}: {}", cache_dir, e);
+            }
+        }
+        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+            warn!("Failed to create transcode cache dir {:?}: {}", cache_dir, e);
+        }
+
         Self {
             sessions: RwLock::new(HashMap::new()),
             cache_dir,
