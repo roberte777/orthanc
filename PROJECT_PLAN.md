@@ -94,29 +94,30 @@ maybe done?
 ## Phase 4: Video Streaming
 
 ### 4.1 Direct Streaming
-- [ ] Implement custom player
-- [ ] Implement direct file streaming endpoint
-- [ ] Support HTTP range requests for seeking
-- [ ] Add MIME type detection
-- [ ] Implement bandwidth throttling options
-- [ ] Add concurrent stream limits
+- [x] Implement custom player
+- [x] Implement direct file streaming endpoint
+- [x] Support HTTP range requests for seeking
+- [x] Add MIME type detection
+- [x] Implement bandwidth throttling options
+- [x] Add concurrent stream limits
 
 ### 4.2 Software Transcoding
-- [ ] Integrate FFmpeg library (ffmpeg-next or direct CLI)
-- [ ] Implement transcoding profiles (quality presets)
-- [ ] Create transcoding job queue
-- [ ] Implement HLS (HTTP Live Streaming) generation
-- [ ] Generate multiple quality variants
-- [ ] Create m3u8 playlist files
-- [ ] Implement segment cleanup
-- [ ] Add transcoding progress tracking
-- [ ] Make sure to support remux, audio transcode, and full video transcoding
+- [x] Integrate FFmpeg library (ffmpeg-next or direct CLI)
+- [x] Implement transcoding profiles (quality presets)
+- [x] Create transcoding job queue
+- [x] Implement HLS (HTTP Live Streaming) generation
+- [x] Generate multiple quality variants
+- [x] Create m3u8 playlist files
+- [x] Implement segment cleanup
+- [x] Add transcoding progress tracking
+- [x] Make sure to support remux, audio transcode, and full video transcoding
 
 ### Playback Observability
 
 - [ ] Have a screen for admins that shows what users are currently watching. This
 should contain details about the stream, such as the format / codec the client
 is consuming at. Should also indicate if doing any kinds of transcoding
+- [ ] Remove transcoding indicator from player. It should live in the monitoring page for admins.
 
 ### 4.3 Hardware Transcoding
 - [ ] Detect available hardware encoders

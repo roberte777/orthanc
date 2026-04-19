@@ -217,6 +217,40 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
+    let skip_back = move |_| {
+        if seeking() { return; }
+        let new_time = (current_time() - 10.0).max(0.0);
+        current_time.set(new_time);
+        if transcode_session_id().is_none() {
+            if let Some(video) = get_video() {
+                video.set_current_time(new_time);
+            }
+        }
+    };
+
+    let skip_forward = move |_| {
+        if seeking() { return; }
+        let new_time = (current_time() + 10.0).min(duration());
+        current_time.set(new_time);
+        if transcode_session_id().is_none() {
+            if let Some(video) = get_video() {
+                video.set_current_time(new_time);
+            }
+        }
+    };
+
+    let toggle_mute = move |_| {
+        if let Some(video) = get_video() {
+            if video.volume() > 0.0 {
+                video.set_volume(0.0);
+                volume.set(0.0);
+            } else {
+                video.set_volume(1.0);
+                volume.set(1.0);
+            }
+        }
+    };
+
     // Update visual position while dragging (no server call)
     let on_seek_input = move |evt: Event<FormData>| {
         if seeking() { return; }
@@ -365,7 +399,10 @@ pub fn Player(id: i64) -> Element {
     let toggle_fullscreen = move |_| {
         if let Some(window) = web_sys::window() {
             if let Some(document) = window.document() {
-                if let Some(el) = document.get_element_by_id("player-container") {
+                // If already fullscreen, exit; otherwise enter
+                if document.fullscreen_element().is_some() {
+                    document.exit_fullscreen();
+                } else if let Some(el) = document.get_element_by_id("player-container") {
                     let _ = el.request_fullscreen();
                 }
             }
@@ -402,12 +439,31 @@ pub fn Player(id: i64) -> Element {
     let cur = format_time(current_time());
     let dur = format_time(duration());
     let is_direct = stream_mode() == "direct" || stream_mode().is_empty();
+    let progress_pct = if duration() > 0.0 {
+        (current_time() / duration()) * 100.0
+    } else {
+        0.0
+    };
+
+    // Volume icon state
+    let vol = volume();
+    let vol_icon = if vol == 0.0 {
+        // Muted icon
+        r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>"#
+    } else if vol < 0.5 {
+        // Low volume
+        r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>"#
+    } else {
+        // High volume
+        r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>"#
+    };
 
     rsx! {
         div {
             id: "player-container",
             class: "player-container",
             onmousemove: on_mouse_move,
+            onclick: toggle_play,
 
             if let Some(ref err) = error_msg() {
                 div { class: "player-error",
@@ -418,7 +474,6 @@ pub fn Player(id: i64) -> Element {
                 video {
                     id: "orthanc-player",
                     class: "player-video",
-                    // Only set src for direct mode; HLS src is set by hls.js
                     src: if is_direct { url.as_str() } else { "about:blank" },
                     preload: "metadata",
                     onplay: move |_| is_playing.set(true),
@@ -432,10 +487,8 @@ pub fn Player(id: i64) -> Element {
                     ontimeupdate: move |_| {
                         if seeking() { return; }
                         if let Some(video) = get_video() {
-                            // Apply offset for HLS mode (zero-based timestamps + offset = real time)
                             let t = video.current_time() + hls_time_offset();
                             current_time.set(t);
-                            // Save progress every ~10 seconds
                             let last = last_save_time();
                             if (t - last).abs() >= 10.0 {
                                 last_save_time.set(t);
@@ -451,16 +504,11 @@ pub fn Player(id: i64) -> Element {
                     onloadedmetadata: move |_| {
                         if let Some(video) = get_video() {
                             let d = video.duration();
-                            // Only use video element duration for direct mode.
-                            // HLS mode gets duration from the API (video element reports
-                            // partial duration after seeking).
                             if d.is_finite() && d > 0.0 && duration() < 1.0
                                 && transcode_session_id().is_none()
                             {
                                 duration.set(d);
                             }
-                            // Resume from saved position (direct mode only --
-                            // HLS mode handles resume via start_time in stream token)
                             if transcode_session_id().is_none() {
                                 let cur = current_time();
                                 if cur > 0.0 {
@@ -470,7 +518,6 @@ pub fn Player(id: i64) -> Element {
                         }
                     },
                     onerror: move |_| {
-                        // Don't fire error for HLS mode — hls.js handles errors
                         if stream_mode() == "direct" {
                             error_msg.set(Some("Failed to load video. The file format may not be supported by your browser.".to_string()));
                         }
@@ -482,66 +529,127 @@ pub fn Player(id: i64) -> Element {
                     div { class: "player-transcode-badge", "{stream_mode}" }
                 }
 
+                // Center spinner (only when buffering/seeking)
+                if seeking() || is_buffering() {
+                    div { class: "player-center-overlay",
+                        div { class: "player-spinner" }
+                    }
+                }
+
                 // Controls overlay
                 div {
                     class: if show_controls() { "player-controls" } else { "player-controls hidden" },
+                    onclick: move |e| e.stop_propagation(),
 
-                    // Top bar
+                    // Top bar - just back arrow
                     div { class: "player-top-bar",
-                        button { class: "player-btn player-back-btn", onclick: go_back, "Back" }
-                        h2 { class: "player-title", "{title}" }
+                        button {
+                            class: "player-icon-btn player-back-btn",
+                            onclick: go_back,
+                            dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>"#,
+                        }
                     }
 
-                    // Center play button / loading spinner
-                    div { class: "player-center",
-                        if seeking() || is_buffering() {
-                            div { class: "player-spinner" }
-                        } else {
-                            button {
-                                class: "player-btn player-play-big",
-                                onclick: toggle_play,
-                                if is_playing() { "Pause" } else { "Play" }
+                    // Spacer to push bottom bar down
+                    div { class: "player-spacer" }
+
+                    // Bottom section: progress bar + controls
+                    div { class: "player-bottom-section",
+
+                        // Progress bar
+                        div { class: "player-progress-wrap",
+                            div { class: "player-progress-bar",
+                                div {
+                                    class: "player-progress-fill",
+                                    style: "width: {progress_pct}%",
+                                }
+                                div {
+                                    class: "player-progress-thumb",
+                                    style: "left: {progress_pct}%",
+                                }
+                            }
+                            input {
+                                r#type: "range",
+                                class: "player-progress-input",
+                                min: "0",
+                                max: "{duration}",
+                                step: "0.1",
+                                value: "{current_time}",
+                                oninput: on_seek_input,
+                                onchange: on_seek_commit,
                             }
                         }
-                    }
 
-                    // Bottom controls
-                    div { class: "player-bottom-bar",
-                        button {
-                            class: "player-btn",
-                            onclick: toggle_play,
-                            if is_playing() { "||" } else { ">" }
-                        }
-                        span { class: "player-time", "{cur}" }
-                        input {
-                            r#type: "range",
-                            class: "player-seek",
-                            min: "0",
-                            max: "{duration}",
-                            step: "0.1",
-                            value: "{current_time}",
-                            oninput: on_seek_input,
-                            onchange: on_seek_commit,
-                        }
-                        span { class: "player-time", "{dur}" }
-                        input {
-                            r#type: "range",
-                            class: "player-volume",
-                            min: "0",
-                            max: "1",
-                            step: "0.05",
-                            value: "{volume}",
-                            oninput: on_volume,
-                        }
-                        button {
-                            class: "player-btn",
-                            onclick: toggle_fullscreen,
-                            "Fullscreen"
+                        // Control buttons row
+                        div { class: "player-bottom-bar",
+                            // Left controls
+                            div { class: "player-controls-left",
+                                // Play/Pause
+                                button {
+                                    class: "player-icon-btn",
+                                    onclick: toggle_play,
+                                    dangerous_inner_html: if is_playing() {
+                                        r#"<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>"#
+                                    } else {
+                                        r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>"#
+                                    },
+                                }
+                                // Skip back 10s
+                                button {
+                                    class: "player-icon-btn player-skip-btn",
+                                    onclick: skip_back,
+                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 110 18 9 9 0 010-18m0 2a7 7 0 100 14 7 7 0 000-14" opacity="0"/><path d="M11.5 3C6.25 3 2 7.25 2 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5.5 1.5L2 3.5 2 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.5" font-size="7.5" font-weight="700" text-anchor="middle" font-family="Arial,sans-serif" fill="currentColor">10</text><path d="M12.5 3a9.5 9.5 0 110 19 9.5 9.5 0 010-19" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="0 15 999"/></svg>"#,
+                                }
+                                // Skip forward 10s
+                                button {
+                                    class: "player-icon-btn player-skip-btn",
+                                    onclick: skip_forward,
+                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 110 18 9 9 0 010-18m0 2a7 7 0 100 14 7 7 0 000-14" opacity="0"/><path d="M12.5 3C17.75 3 22 7.25 22 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 1.5L22 3.5 22 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="16.5" font-size="7.5" font-weight="700" text-anchor="middle" font-family="Arial,sans-serif" fill="currentColor">10</text><path d="M12.5 3a9.5 9.5 0 100 19 9.5 9.5 0 000-19" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="0 15 999"/></svg>"#,
+                                }
+                                // Volume
+                                div { class: "player-volume-group",
+                                    button {
+                                        class: "player-icon-btn",
+                                        onclick: toggle_mute,
+                                        dangerous_inner_html: "{vol_icon}",
+                                    }
+                                    div { class: "player-volume-slider-wrap",
+                                        input {
+                                            r#type: "range",
+                                            class: "player-volume",
+                                            min: "0",
+                                            max: "1",
+                                            step: "0.05",
+                                            value: "{volume}",
+                                            oninput: on_volume,
+                                        }
+                                    }
+                                }
+                                // Time display
+                                span { class: "player-time", "{cur} / {dur}" }
+                            }
+
+                            // Center title
+                            div { class: "player-controls-center",
+                                span { class: "player-title", "{title}" }
+                            }
+
+                            // Right controls
+                            div { class: "player-controls-right",
+                                // Fullscreen
+                                button {
+                                    class: "player-icon-btn",
+                                    onclick: toggle_fullscreen,
+                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>"#,
+                                }
+                            }
                         }
                     }
                 }
             } else {
-                div { class: "player-loading", "Loading..." }
+                div { class: "player-loading",
+                    div { class: "player-spinner" }
+                }
             }
         }
     }
