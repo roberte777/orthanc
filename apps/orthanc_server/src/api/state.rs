@@ -8,6 +8,7 @@ pub struct StreamTokenData {
     pub user_id: i64,
     pub media_item_id: i64,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub transcode_session_id: Option<String>,
 }
 
 pub struct AppState {
@@ -23,6 +24,11 @@ pub struct AppState {
     pub active_streams: Arc<RwLock<HashMap<i64, usize>>>,
     pub max_concurrent_streams: usize,
     pub max_bandwidth_bytes_per_sec: Option<u64>,
+    // Transcoding
+    pub ffmpeg_path: String,
+    pub ffprobe_path: String,
+    pub transcode_cache_dir: String,
+    pub transcode_manager: Arc<crate::transcoding::TranscodeSessionManager>,
 }
 
 impl AppState {
@@ -69,6 +75,26 @@ impl AppState {
             .and_then(|s| s.parse::<u64>().ok())
             .map(|mbps| mbps * 1_000_000);
 
+        let ffmpeg_path = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".to_string());
+        let ffprobe_path = std::env::var("FFPROBE_PATH").unwrap_or_else(|_| "ffprobe".to_string());
+        let transcode_cache_dir = std::env::var("TRANSCODE_CACHE_DIR")
+            .unwrap_or_else(|_| "./transcode_cache".to_string());
+
+        if let Err(e) = std::fs::create_dir_all(&transcode_cache_dir) {
+            tracing::error!("Failed to create transcode cache dir '{}': {}", transcode_cache_dir, e);
+        }
+
+        let max_concurrent_transcodes = std::env::var("MAX_CONCURRENT_TRANSCODES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2);
+
+        let transcode_manager = Arc::new(crate::transcoding::TranscodeSessionManager::new(
+            transcode_cache_dir.clone().into(),
+            ffmpeg_path.clone(),
+            max_concurrent_transcodes,
+        ));
+
         Self {
             db,
             jwt_secret,
@@ -87,6 +113,10 @@ impl AppState {
             active_streams: Arc::new(RwLock::new(HashMap::new())),
             max_concurrent_streams,
             max_bandwidth_bytes_per_sec,
+            ffmpeg_path,
+            ffprobe_path,
+            transcode_cache_dir,
+            transcode_manager,
         }
     }
 }

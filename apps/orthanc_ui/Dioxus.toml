@@ -12,7 +12,7 @@ title = "orthanc_ui"
 style = []
 
 # Additional JavaScript files
-script = []
+script = ["https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"]
 
 [web.resource.dev]
 

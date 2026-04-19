@@ -27,6 +27,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .nest("/api/media", media::router())
         .nest("/api/media", streaming::media_router())
         .nest("/api/stream", streaming::stream_router())
+        .nest("/api/hls", streaming::hls_router())
         .with_state(state.clone())
         .nest_service(
             "/api/images",

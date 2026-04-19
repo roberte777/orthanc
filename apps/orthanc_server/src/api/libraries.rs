@@ -410,7 +410,7 @@ async fn scan_library(
         .map_err(anyhow::Error::from)?
         .ok_or(ApiError::NotFound("Library not found".to_string()))?;
 
-    let result = crate::scanner::scan_library(&state.db, &library)
+    let result = crate::scanner::scan_library(&state.db, &library, &state.ffprobe_path)
         .await
         .map_err(anyhow::Error::from)?;
 

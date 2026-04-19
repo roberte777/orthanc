@@ -4,7 +4,8 @@ pub mod walker;
 use crate::db::DbPool;
 use crate::models::library::Library;
 use parser::ParsedMedia;
-use tracing::{info, warn};
+use serde::Deserialize;
+use tracing::{debug, info, warn};
 
 /// Video file extensions we recognize
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -30,16 +31,20 @@ pub async fn background_scan_loop(
     tmdb_api_key: Option<String>,
     tvdb_api_key: String,
     image_cache_dir: String,
+    ffprobe_path: String,
 ) {
+    // Backfill stream info for items scanned before ffprobe integration
+    backfill_streams(&db, &ffprobe_path).await;
+
     // Initial scan on startup
     info!("Running initial library scan");
-    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir).await;
+    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir, &ffprobe_path).await;
 
     // Then check every 60 seconds which libraries need scanning
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir).await;
+        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir, &ffprobe_path).await;
     }
 }
 
@@ -48,6 +53,7 @@ async fn scan_all_due_libraries(
     tmdb_api_key: Option<&str>,
     tvdb_api_key: &str,
     image_cache_dir: &str,
+    ffprobe_path: &str,
 ) {
     let libraries = match sqlx::query_as::<_, Library>(
         "SELECT * FROM libraries WHERE is_enabled = 1",
@@ -96,7 +102,7 @@ async fn scan_all_due_libraries(
         }
 
         info!("Background scan: scanning '{}'", lib.name);
-        match scan_library(db, lib).await {
+        match scan_library(db, lib, ffprobe_path).await {
             Ok(result) => {
                 if result.added > 0 {
                     info!(
@@ -142,7 +148,7 @@ async fn scan_all_due_libraries(
 }
 
 /// Scan a single library: walk all its paths, parse filenames, and upsert into media_items.
-pub async fn scan_library(db: &DbPool, library: &Library) -> Result<ScanResult, anyhow::Error> {
+pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) -> Result<ScanResult, anyhow::Error> {
     let paths = sqlx::query_as::<_, crate::models::library::LibraryPath>(
         "SELECT * FROM library_paths WHERE library_id = ? AND is_enabled = 1",
     )
@@ -171,8 +177,13 @@ pub async fn scan_library(db: &DbPool, library: &Library) -> Result<ScanResult, 
             let parsed = parser::parse_media_file(&file_info, &library.library_type);
 
             match upsert_media(db, library, &file_info, &parsed).await {
-                Ok(true) => result.added += 1,
-                Ok(false) => result.unchanged += 1,
+                Ok(Some(new_id)) => {
+                    result.added += 1;
+                    // Probe streams for newly added items
+                    let path_str = file_info.path.to_string_lossy();
+                    probe_and_store_streams(db, new_id, &path_str, ffprobe_path).await;
+                }
+                Ok(None) => result.unchanged += 1,
                 Err(e) => {
                     warn!("Failed to upsert media: {:?} - {}", file_info.path, e);
                     result.errors.push(format!("{}: {}", file_info.path.display(), e));
@@ -202,13 +213,13 @@ pub struct ScanResult {
     pub errors: Vec<String>,
 }
 
-/// Insert or skip a media item. Returns Ok(true) if inserted, Ok(false) if already existed.
+/// Insert or skip a media item. Returns Ok(Some(id)) if inserted, Ok(None) if already existed.
 async fn upsert_media(
     db: &DbPool,
     library: &Library,
     file_info: &walker::FileInfo,
     parsed: &ParsedMedia,
-) -> Result<bool, anyhow::Error> {
+) -> Result<Option<i64>, anyhow::Error> {
     let file_path_str = file_info.path.to_string_lossy().to_string();
 
     // Check if already scanned
@@ -219,7 +230,7 @@ async fn upsert_media(
             .await?;
 
     if existing.is_some() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let ext = file_info
@@ -244,7 +255,7 @@ async fn upsert_media(
 
             let sort_title = make_sort_title(&display_title);
 
-            sqlx::query(
+            let result = sqlx::query(
                 "INSERT INTO media_items (library_id, media_type, title, sort_title, release_date, file_path, file_size_bytes, container_format, date_modified)
                  VALUES (?, 'movie', ?, ?, ?, ?, ?, ?, ?)",
             )
@@ -258,6 +269,7 @@ async fn upsert_media(
             .bind(&file_info.modified)
             .execute(db)
             .await?;
+            Ok(Some(result.last_insert_rowid()))
         }
         ParsedMedia::Episode {
             show_name,
@@ -279,7 +291,7 @@ async fn upsert_media(
                 .unwrap_or_else(|| format!("Episode {}", episode));
             let sort_title = make_sort_title(&ep_title);
 
-            sqlx::query(
+            let result = sqlx::query(
                 "INSERT INTO media_items (media_type, title, sort_title, parent_id, season_number, episode_number, file_path, file_size_bytes, container_format, date_modified)
                  VALUES ('episode', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
@@ -294,11 +306,12 @@ async fn upsert_media(
             .bind(&file_info.modified)
             .execute(db)
             .await?;
+            Ok(Some(result.last_insert_rowid()))
         }
         ParsedMedia::Unknown { filename } => {
             // Store it as a movie with the raw filename as title
             let sort_title = make_sort_title(filename);
-            sqlx::query(
+            let result = sqlx::query(
                 "INSERT INTO media_items (library_id, media_type, title, sort_title, file_path, file_size_bytes, container_format, date_modified)
                  VALUES (?, 'movie', ?, ?, ?, ?, ?, ?)",
             )
@@ -311,10 +324,9 @@ async fn upsert_media(
             .bind(&file_info.modified)
             .execute(db)
             .await?;
+            Ok(Some(result.last_insert_rowid()))
         }
     }
-
-    Ok(true)
 }
 
 async fn find_or_create_show(
@@ -394,4 +406,219 @@ fn make_sort_title(title: &str) -> String {
     } else {
         lower
     }
+}
+
+// ---------------------------------------------------------------------------
+// ffprobe integration
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct FfprobeOutput {
+    streams: Vec<FfprobeStream>,
+    format: Option<FfprobeFormat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FfprobeStream {
+    index: i32,
+    codec_type: Option<String>,
+    codec_name: Option<String>,
+    width: Option<i32>,
+    height: Option<i32>,
+    display_aspect_ratio: Option<String>,
+    r_frame_rate: Option<String>,
+    #[serde(default)]
+    bits_per_raw_sample: Option<String>,
+    color_space: Option<String>,
+    channels: Option<i32>,
+    sample_rate: Option<String>,
+    bit_rate: Option<String>,
+    #[serde(default)]
+    tags: Option<FfprobeTags>,
+    #[serde(default)]
+    disposition: Option<FfprobeDisposition>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FfprobeTags {
+    language: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FfprobeDisposition {
+    default: Option<i32>,
+    forced: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FfprobeFormat {
+    duration: Option<String>,
+}
+
+/// Run ffprobe on a file and populate the media_streams table.
+/// Also updates duration_seconds on the media_item if available.
+pub async fn probe_and_store_streams(
+    db: &DbPool,
+    media_item_id: i64,
+    file_path: &str,
+    ffprobe_path: &str,
+) {
+    let output = match tokio::process::Command::new(ffprobe_path)
+        .args([
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_streams",
+            "-show_format",
+            file_path,
+        ])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!("Failed to run ffprobe on '{}': {}", file_path, e);
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        warn!(
+            "ffprobe failed for '{}': {}",
+            file_path,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let probe: FfprobeOutput = match serde_json::from_slice(&output.stdout) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Failed to parse ffprobe output for '{}': {}", file_path, e);
+            return;
+        }
+    };
+
+    // Delete existing streams for this item
+    if let Err(e) = sqlx::query("DELETE FROM media_streams WHERE media_item_id = ?")
+        .bind(media_item_id)
+        .execute(db)
+        .await
+    {
+        warn!("Failed to clear old media_streams: {}", e);
+        return;
+    }
+
+    // Insert streams
+    for s in &probe.streams {
+        let stream_type = match s.codec_type.as_deref() {
+            Some("video") => "video",
+            Some("audio") => "audio",
+            Some("subtitle") => "subtitle",
+            _ => continue,
+        };
+
+        let tags = s.tags.as_ref();
+        let disp = s.disposition.as_ref();
+        let frame_rate = s.r_frame_rate.as_deref().and_then(parse_frame_rate);
+        let bit_depth = s
+            .bits_per_raw_sample
+            .as_deref()
+            .and_then(|b| b.parse::<i32>().ok());
+        let sample_rate = s
+            .sample_rate
+            .as_deref()
+            .and_then(|r| r.parse::<i32>().ok());
+        let bit_rate = s
+            .bit_rate
+            .as_deref()
+            .and_then(|r| r.parse::<i32>().ok());
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO media_streams (media_item_id, stream_index, stream_type, codec, language, title, is_default, is_forced, width, height, aspect_ratio, frame_rate, bit_depth, color_space, channels, sample_rate, bit_rate)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(media_item_id)
+        .bind(s.index)
+        .bind(stream_type)
+        .bind(&s.codec_name)
+        .bind(tags.and_then(|t| t.language.as_deref()))
+        .bind(tags.and_then(|t| t.title.as_deref()))
+        .bind(disp.and_then(|d| d.default).unwrap_or(0) != 0)
+        .bind(disp.and_then(|d| d.forced).unwrap_or(0) != 0)
+        .bind(s.width)
+        .bind(s.height)
+        .bind(&s.display_aspect_ratio)
+        .bind(frame_rate)
+        .bind(bit_depth)
+        .bind(&s.color_space)
+        .bind(s.channels)
+        .bind(sample_rate)
+        .bind(bit_rate)
+        .execute(db)
+        .await
+        {
+            warn!("Failed to insert media_stream: {}", e);
+        }
+    }
+
+    // Update duration from format
+    if let Some(ref fmt) = probe.format {
+        if let Some(ref dur_str) = fmt.duration {
+            if let Ok(dur) = dur_str.parse::<f64>() {
+                let _ = sqlx::query(
+                    "UPDATE media_items SET duration_seconds = ? WHERE id = ? AND (duration_seconds IS NULL OR duration_seconds = 0)",
+                )
+                .bind(dur as i32)
+                .bind(media_item_id)
+                .execute(db)
+                .await;
+            }
+        }
+    }
+
+    debug!(
+        "Stored {} streams for media_item {}",
+        probe.streams.len(),
+        media_item_id
+    );
+}
+
+/// Parse ffprobe frame rate fraction like "24000/1001" into a float.
+fn parse_frame_rate(rate: &str) -> Option<f64> {
+    let mut parts = rate.split('/');
+    let num: f64 = parts.next()?.parse().ok()?;
+    let den: f64 = parts.next().and_then(|d| d.parse().ok()).unwrap_or(1.0);
+    if den == 0.0 {
+        return None;
+    }
+    Some(num / den)
+}
+
+/// Backfill media_streams for items that were scanned before ffprobe integration.
+pub async fn backfill_streams(db: &DbPool, ffprobe_path: &str) {
+    let items: Vec<(i64, String)> = match sqlx::query_as(
+        "SELECT mi.id, mi.file_path FROM media_items mi
+         WHERE mi.file_path IS NOT NULL
+         AND mi.id NOT IN (SELECT DISTINCT media_item_id FROM media_streams)",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(items) => items,
+        Err(e) => {
+            warn!("Failed to query items for stream backfill: {}", e);
+            return;
+        }
+    };
+
+    if items.is_empty() {
+        return;
+    }
+
+    info!("Backfilling stream info for {} media items", items.len());
+    for (id, path) in &items {
+        probe_and_store_streams(db, *id, path, ffprobe_path).await;
+    }
+    info!("Stream backfill complete");
 }

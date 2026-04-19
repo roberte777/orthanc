@@ -11,10 +11,77 @@ fn get_video() -> Option<web_sys::HtmlVideoElement> {
     el.dyn_into::<web_sys::HtmlVideoElement>().ok()
 }
 
+/// Probe which codecs/containers the browser supports via MediaSource.isTypeSupported().
+fn probe_client_capabilities() -> (Vec<String>, Vec<String>, Vec<String>) {
+    let js = r#"(function() {
+        var ms = window.MediaSource || window.WebKitMediaSource;
+        if (!ms) return JSON.stringify({v:[],a:[],c:[]});
+        var video = [];
+        var audio = [];
+        var containers = [];
+        var videoTests = {
+            'h264': 'video/mp4; codecs="avc1.640029"',
+            'hevc': 'video/mp4; codecs="hvc1.1.6.L93.B0"',
+            'vp9':  'video/webm; codecs="vp9"',
+            'av1':  'video/mp4; codecs="av01.0.08M.08"',
+        };
+        var audioTests = {
+            'aac':    'audio/mp4; codecs="mp4a.40.2"',
+            'opus':   'audio/webm; codecs="opus"',
+            'mp3':    'audio/mpeg',
+            'flac':   'audio/flac',
+            'vorbis': 'audio/webm; codecs="vorbis"',
+            'ac3':    'audio/mp4; codecs="ac-3"',
+            'eac3':   'audio/mp4; codecs="ec-3"',
+        };
+        var containerTests = {
+            'mp4':  'video/mp4; codecs="avc1.640029,mp4a.40.2"',
+            'webm': 'video/webm; codecs="vp9,opus"',
+            'mov':  'video/mp4; codecs="avc1.640029,mp4a.40.2"',
+            'm4v':  'video/mp4; codecs="avc1.640029,mp4a.40.2"',
+        };
+        for (var k in videoTests) {
+            try { if (ms.isTypeSupported(videoTests[k])) video.push(k); } catch(e) {}
+        }
+        for (var k in audioTests) {
+            try { if (ms.isTypeSupported(audioTests[k])) audio.push(k); } catch(e) {}
+        }
+        for (var k in containerTests) {
+            try { if (ms.isTypeSupported(containerTests[k])) containers.push(k); } catch(e) {}
+        }
+        return JSON.stringify({v:video,a:audio,c:containers});
+    })()"#;
+
+    let result = js_sys::eval(js);
+    if let Ok(val) = result {
+        if let Some(s) = val.as_string() {
+            #[derive(serde::Deserialize)]
+            struct Caps {
+                v: Vec<String>,
+                a: Vec<String>,
+                c: Vec<String>,
+            }
+            if let Ok(caps) = serde_json::from_str::<Caps>(&s) {
+                return (caps.v, caps.a, caps.c);
+            }
+        }
+    }
+    // Fallback: empty = server uses defaults
+    (vec![], vec![], vec![])
+}
+
+/// Destroy the hls.js instance.
+fn destroy_hls() {
+    let _ = js_sys::eval(
+        "if (window._orthanc_hls) { window._orthanc_hls.destroy(); window._orthanc_hls = null; }",
+    );
+}
+
 #[component]
 pub fn Player(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
     let mut stream_url = use_signal(|| None::<String>);
+    let mut stream_mode = use_signal(|| String::new());
     let mut error_msg = use_signal(|| None::<String>);
     let mut is_playing = use_signal(|| false);
     let mut current_time = use_signal(|| 0.0_f64);
@@ -22,31 +89,24 @@ pub fn Player(id: i64) -> Element {
     let mut show_controls = use_signal(|| true);
     let mut volume = use_signal(|| 1.0_f64);
     let mut title = use_signal(|| String::new());
-    let mut initial_position = use_signal(|| 0_i32);
     let mut last_save_time = use_signal(|| 0.0_f64);
+    let mut transcode_session_id = use_signal(|| None::<String>);
+    let mut stream_token = use_signal(|| String::new());
+    // True while a seek restart is in progress (suppress ontimeupdate)
+    let mut seeking = use_signal(|| false);
+    // True when the video element is waiting for data (buffering)
+    let mut is_buffering = use_signal(|| false);
+    // Offset added to video.currentTime to get real media position (for HLS mode)
+    let mut hls_time_offset = use_signal(|| 0.0_f64);
+    // Timestamp of last completed seek (for debouncing spurious onchange)
+    let mut last_seek_time = use_signal(|| 0.0_f64);
     let nav = use_navigator();
 
-    // Fetch stream token and progress on mount
+    // Fetch progress first, then stream token (so we can pass resume position as start_time)
     use_effect(move || {
         spawn(async move {
-            // Get stream token
-            let token_result = with_refresh(auth, |token| async move {
-                api::get_stream_token(&token, id).await
-            })
-            .await;
-
-            match token_result {
-                Ok(resp) => {
-                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
-                    stream_url.set(Some(url));
-                }
-                Err(e) => {
-                    error_msg.set(Some(format!("Failed to get stream: {}", e)));
-                    return;
-                }
-            }
-
             // Get saved progress for resume
+            let mut resume_time = 0.0_f64;
             let progress_result = with_refresh(auth, |token| async move {
                 api::get_progress(&token, id).await
             })
@@ -54,18 +114,87 @@ pub fn Player(id: i64) -> Element {
 
             if let Ok(progress) = progress_result {
                 if !progress.is_completed && progress.position_seconds > 0 {
-                    initial_position.set(progress.position_seconds);
+                    resume_time = progress.position_seconds as f64;
                 }
             }
 
-            // Get media info for title
-            let movie_result = with_refresh(auth, |token| async move {
-                api::get_movie(&token, id).await
+            // Probe client codec support
+            let (video_codecs, audio_codecs, containers) = probe_client_capabilities();
+
+            // Get stream token (pass resume position as start_time for HLS mode)
+            let token_result = with_refresh(auth, {
+                let vc = video_codecs.clone();
+                let ac = audio_codecs.clone();
+                let ct = containers.clone();
+                move |token| {
+                    let vc = vc.clone();
+                    let ac = ac.clone();
+                    let ct = ct.clone();
+                    async move {
+                        api::get_stream_token(&token, id, vc, ac, ct, resume_time).await
+                    }
+                }
             })
             .await;
 
-            if let Ok(media) = movie_result {
-                title.set(media.title);
+            match token_result {
+                Ok(resp) => {
+                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    let mode = resp.mode.clone();
+                    stream_mode.set(mode.clone());
+                    stream_url.set(Some(url.clone()));
+                    title.set(resp.title.clone());
+                    transcode_session_id.set(resp.transcode_session_id.clone());
+                    stream_token.set(resp.token.clone());
+                    if let Some(dur) = resp.duration_seconds {
+                        if dur > 0 {
+                            duration.set(dur as f64);
+                        }
+                    }
+
+                    // For HLS modes, set the time offset and attach hls.js
+                    if mode != "direct" {
+                        hls_time_offset.set(resume_time);
+                        last_seek_time.set(resume_time);
+                        let hls_url = url.clone();
+                        let token = resp.token.clone();
+                        let js = format!(
+                            "setTimeout(function() {{ \
+                                var video = document.getElementById('orthanc-player'); \
+                                if (!video) return; \
+                                if (typeof Hls !== 'undefined' && Hls.isSupported()) {{ \
+                                    if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                    var hls = new Hls({{ \
+                                        startPosition: 0, \
+                                        xhrSetup: function(xhr, url) {{ \
+                                            if (url.indexOf('token=') === -1) {{ \
+                                                var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                                url = url + sep + 'token={}'; \
+                                            }} \
+                                            xhr.open('GET', url, true); \
+                                        }} \
+                                    }}); \
+                                    hls.loadSource('{}'); \
+                                    hls.attachMedia(video); \
+                                    video.dataset.hlsUrl = '{}'; \
+                                    window._orthanc_hls = hls; \
+                                }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{ \
+                                    video.src = '{}'; \
+                                }} \
+                            }}, 100);",
+                            token, hls_url, hls_url, hls_url
+                        );
+                        let _ = js_sys::eval(&js);
+                    } else if resume_time > 0.0 {
+                        // For direct mode, set currentTime after metadata loads
+                        // (handled in onloadedmetadata via hls_time_offset = 0 and resume_time)
+                        // We store resume_time so onloadedmetadata can use it
+                        current_time.set(resume_time);
+                    }
+                }
+                Err(e) => {
+                    error_msg.set(Some(format!("Failed to get stream: {}", e)));
+                }
             }
         });
     });
@@ -76,8 +205,8 @@ pub fn Player(id: i64) -> Element {
                 let _ = video.play();
             } else {
                 video.pause().ok();
-                // Save progress on pause
-                let t = video.current_time();
+                // Save progress on pause (apply offset for HLS mode)
+                let t = video.current_time() + hls_time_offset();
                 spawn(async move {
                     let _ = with_refresh(auth, |token| async move {
                         api::update_progress(&token, id, t as i32).await
@@ -88,11 +217,134 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
-    let on_seek = move |evt: Event<FormData>| {
-        if let Some(video) = get_video() {
-            if let Ok(t) = evt.value().parse::<f64>() {
-                video.set_current_time(t);
-                current_time.set(t);
+    // Update visual position while dragging (no server call)
+    let on_seek_input = move |evt: Event<FormData>| {
+        if seeking() { return; }
+        if let Ok(t) = evt.value().parse::<f64>() {
+            current_time.set(t);
+            // For direct mode, seek immediately
+            if transcode_session_id().is_none() {
+                if let Some(video) = get_video() {
+                    video.set_current_time(t);
+                }
+            }
+        }
+    };
+
+    // Commit seek on slider release (onchange fires once on mouseup)
+    let on_seek_commit = move |evt: Event<FormData>| {
+        // Guard: ignore onchange while a seek is already in flight
+        if seeking() { return; }
+
+        if let Ok(t) = evt.value().parse::<f64>() {
+            // Debounce: skip if the target is within 10s of the last seek
+            // (catches spurious onchange from programmatic slider value updates)
+            if transcode_session_id().is_some() && (t - last_seek_time()).abs() < 10.0 {
+                return;
+            }
+            current_time.set(t);
+
+            if let Some(ref session_id) = transcode_session_id() {
+                // Remember play state before pausing for the seek
+                let was_playing = is_playing();
+                if let Some(video) = get_video() {
+                    video.pause().ok();
+                }
+                is_playing.set(false);
+                seeking.set(true);
+
+                let session_id = session_id.clone();
+                let tk = stream_token();
+                spawn(async move {
+                    // Server waits until FFmpeg produces first segment before responding
+                    let seek_result = with_refresh(auth, {
+                        let sid = session_id.clone();
+                        move |token| {
+                            let sid = sid.clone();
+                            async move {
+                                api::transcode_seek(&token, &sid, t).await
+                            }
+                        }
+                    })
+                    .await;
+
+                    match seek_result {
+                        Ok(resp) if resp.ready => {
+                            // Update time offset: video timestamps are zero-based,
+                            // add this offset to get real media position
+                            hls_time_offset.set(resp.seek_time);
+
+                            // Cache-bust: append unique query param so hls.js
+                            // fetches fresh manifest and segments after seek
+                            let cache_bust = js_sys::Date::now() as u64;
+
+                            // Reload hls.js immediately -- segments are already ready
+                            let auto_play = if was_playing { "true" } else { "false" };
+                            let js = format!(
+                                "(function() {{ \
+                                    if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                    var video = document.getElementById('orthanc-player'); \
+                                    if (!video) return; \
+                                    window._orthanc_seek_done = false; \
+                                    var cb = '{}'; \
+                                    var autoPlay = {}; \
+                                    var hls = new Hls({{ \
+                                        startPosition: 0, \
+                                        xhrSetup: function(xhr, url) {{ \
+                                            var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                            if (url.indexOf('token=') === -1) {{ \
+                                                url = url + sep + 'token={}' + '&_cb=' + cb; \
+                                            }} else {{ \
+                                                url = url + '&_cb=' + cb; \
+                                            }} \
+                                            xhr.open('GET', url, true); \
+                                        }} \
+                                    }}); \
+                                    var hlsUrl = video.dataset.hlsUrl || video.src; \
+                                    var urlSep = hlsUrl.indexOf('?') === -1 ? '?' : '&'; \
+                                    hls.loadSource(hlsUrl + urlSep + '_cb=' + cb); \
+                                    hls.attachMedia(video); \
+                                    hls.on(Hls.Events.MANIFEST_PARSED, function() {{ \
+                                        if (autoPlay) {{ video.play(); }} \
+                                        window._orthanc_seek_done = true; \
+                                    }}); \
+                                    window._orthanc_hls = hls; \
+                                }})()",
+                                cache_bust, auto_play, tk
+                            );
+                            let _ = js_sys::eval(&js);
+
+                            // Poll until hls.js signals it's ready (MANIFEST_PARSED fired),
+                            // with a 10-second timeout to avoid hanging forever
+                            let poll_start = js_sys::Date::now();
+                            loop {
+                                let done = js_sys::eval("window._orthanc_seek_done === true")
+                                    .ok()
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if done { break; }
+                                if js_sys::Date::now() - poll_start > 10_000.0 { break; }
+                                let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
+                                    let _ = web_sys::window().unwrap()
+                                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100);
+                                });
+                                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                            }
+
+                            last_seek_time.set(t);
+                        }
+                        _ => {
+                            // Seek timed out or failed
+                        }
+                    }
+
+                    // Clear seeking flag now that hls.js has parsed the manifest
+                    seeking.set(false);
+                });
+            } else {
+                if let Some(video) = get_video() {
+                    video.set_current_time(t);
+                }
             }
         }
     };
@@ -131,6 +383,7 @@ pub fn Player(id: i64) -> Element {
                 .await;
             });
         }
+        destroy_hls();
         nav.go_back();
     };
 
@@ -148,6 +401,7 @@ pub fn Player(id: i64) -> Element {
 
     let cur = format_time(current_time());
     let dur = format_time(duration());
+    let is_direct = stream_mode() == "direct" || stream_mode().is_empty();
 
     rsx! {
         div {
@@ -164,13 +418,22 @@ pub fn Player(id: i64) -> Element {
                 video {
                     id: "orthanc-player",
                     class: "player-video",
-                    src: "{url}",
+                    // Only set src for direct mode; HLS src is set by hls.js
+                    src: if is_direct { url.as_str() } else { "about:blank" },
                     preload: "metadata",
                     onplay: move |_| is_playing.set(true),
                     onpause: move |_| is_playing.set(false),
+                    onwaiting: move |_| is_buffering.set(true),
+                    onplaying: move |_| {
+                        is_buffering.set(false);
+                        is_playing.set(true);
+                    },
+                    oncanplay: move |_| is_buffering.set(false),
                     ontimeupdate: move |_| {
+                        if seeking() { return; }
                         if let Some(video) = get_video() {
-                            let t = video.current_time();
+                            // Apply offset for HLS mode (zero-based timestamps + offset = real time)
+                            let t = video.current_time() + hls_time_offset();
                             current_time.set(t);
                             // Save progress every ~10 seconds
                             let last = last_save_time();
@@ -187,17 +450,36 @@ pub fn Player(id: i64) -> Element {
                     },
                     onloadedmetadata: move |_| {
                         if let Some(video) = get_video() {
-                            duration.set(video.duration());
-                            // Resume from saved position
-                            let pos = initial_position();
-                            if pos > 0 {
-                                video.set_current_time(pos as f64);
+                            let d = video.duration();
+                            // Only use video element duration for direct mode.
+                            // HLS mode gets duration from the API (video element reports
+                            // partial duration after seeking).
+                            if d.is_finite() && d > 0.0 && duration() < 1.0
+                                && transcode_session_id().is_none()
+                            {
+                                duration.set(d);
+                            }
+                            // Resume from saved position (direct mode only --
+                            // HLS mode handles resume via start_time in stream token)
+                            if transcode_session_id().is_none() {
+                                let cur = current_time();
+                                if cur > 0.0 {
+                                    video.set_current_time(cur);
+                                }
                             }
                         }
                     },
                     onerror: move |_| {
-                        error_msg.set(Some("Failed to load video. The file format may not be supported by your browser.".to_string()));
+                        // Don't fire error for HLS mode — hls.js handles errors
+                        if stream_mode() == "direct" {
+                            error_msg.set(Some("Failed to load video. The file format may not be supported by your browser.".to_string()));
+                        }
                     },
+                }
+
+                // Transcode mode indicator
+                if !is_direct {
+                    div { class: "player-transcode-badge", "{stream_mode}" }
                 }
 
                 // Controls overlay
@@ -210,12 +492,16 @@ pub fn Player(id: i64) -> Element {
                         h2 { class: "player-title", "{title}" }
                     }
 
-                    // Center play button
+                    // Center play button / loading spinner
                     div { class: "player-center",
-                        button {
-                            class: "player-btn player-play-big",
-                            onclick: toggle_play,
-                            if is_playing() { "Pause" } else { "Play" }
+                        if seeking() || is_buffering() {
+                            div { class: "player-spinner" }
+                        } else {
+                            button {
+                                class: "player-btn player-play-big",
+                                onclick: toggle_play,
+                                if is_playing() { "Pause" } else { "Play" }
+                            }
                         }
                     }
 
@@ -234,7 +520,8 @@ pub fn Player(id: i64) -> Element {
                             max: "{duration}",
                             step: "0.1",
                             value: "{current_time}",
-                            oninput: on_seek,
+                            oninput: on_seek_input,
+                            onchange: on_seek_commit,
                         }
                         span { class: "player-time", "{dur}" }
                         input {

@@ -381,6 +381,10 @@ pub async fn change_password(token: &str, req: ChangePasswordRequest) -> Result<
 pub struct StreamTokenResponse {
     pub token: String,
     pub stream_url: String,
+    pub mode: String,
+    pub title: String,
+    pub duration_seconds: Option<i32>,
+    pub transcode_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,9 +393,33 @@ pub struct PlaybackProgress {
     pub is_completed: bool,
 }
 
-pub async fn get_stream_token(token: &str, media_id: i64) -> Result<StreamTokenResponse, String> {
-    let body = serde_json::json!({"media_item_id": media_id});
+pub async fn get_stream_token(
+    token: &str,
+    media_id: i64,
+    supported_video_codecs: Vec<String>,
+    supported_audio_codecs: Vec<String>,
+    supported_containers: Vec<String>,
+    start_time: f64,
+) -> Result<StreamTokenResponse, String> {
+    let body = serde_json::json!({
+        "media_item_id": media_id,
+        "start_time": start_time,
+        "supported_video_codecs": supported_video_codecs,
+        "supported_audio_codecs": supported_audio_codecs,
+        "supported_containers": supported_containers,
+    });
     post_json("/api/media/stream-token", &body, Some(token)).await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscodeSeekResponse {
+    pub ready: bool,
+    pub seek_time: f64,
+}
+
+pub async fn transcode_seek(token: &str, session_id: &str, seek_time: f64) -> Result<TranscodeSeekResponse, String> {
+    let body = serde_json::json!({"session_id": session_id, "seek_time": seek_time});
+    post_json("/api/media/transcode-seek", &body, Some(token)).await
 }
 
 pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) -> Result<(), String> {

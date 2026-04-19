@@ -4,7 +4,8 @@ use crate::{
         state::{AppState, StreamTokenData},
     },
     auth::middleware::AuthUser,
-    models::media::MediaItem,
+    models::{media::MediaItem, media_stream::MediaStream},
+    transcoding,
 };
 use axum::{
     body::Body,
@@ -27,6 +28,7 @@ use tokio_util::io::ReaderStream;
 pub fn media_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/stream-token", post(create_stream_token))
+        .route("/transcode-seek", post(transcode_seek))
         .route("/{id}/progress", get(get_progress))
         .route("/{id}/progress", put(update_progress))
 }
@@ -37,6 +39,11 @@ pub fn stream_router() -> Router<Arc<AppState>> {
     Router::new().route("/{media_id}", get(stream_media))
 }
 
+/// HLS segment serving (mounted under /api/hls).
+pub fn hls_router() -> Router<Arc<AppState>> {
+    Router::new().route("/{session_id}/{*path}", get(serve_hls))
+}
+
 // ---------------------------------------------------------------------------
 // Stream token
 // ---------------------------------------------------------------------------
@@ -44,12 +51,29 @@ pub fn stream_router() -> Router<Arc<AppState>> {
 #[derive(Deserialize)]
 struct StreamTokenRequest {
     media_item_id: i64,
+    /// Optional start time for resume (seconds). Defaults to 0.
+    #[serde(default)]
+    start_time: f64,
+    /// Video codecs the client can play (e.g. ["h264", "hevc"])
+    #[serde(default)]
+    supported_video_codecs: Vec<String>,
+    /// Audio codecs the client can play (e.g. ["aac", "opus"])
+    #[serde(default)]
+    supported_audio_codecs: Vec<String>,
+    /// Container formats the client can play (e.g. ["mp4", "webm"])
+    #[serde(default)]
+    supported_containers: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct StreamTokenResponse {
     token: String,
     stream_url: String,
+    mode: String,
+    title: String,
+    duration_seconds: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transcode_session_id: Option<String>,
 }
 
 async fn create_stream_token(
@@ -72,11 +96,27 @@ async fn create_stream_token(
     .map_err(anyhow::Error::from)?
     .ok_or(ApiError::NotFound("Media item not found".into()))?;
 
-    if item.file_path.is_none() {
-        return Err(ApiError::BadRequest(
-            "Media item has no file".into(),
-        ));
-    }
+    let file_path = item
+        .file_path
+        .as_deref()
+        .ok_or(ApiError::BadRequest("Media item has no file".into()))?
+        .to_string();
+
+    // Query media streams to decide transcode mode
+    let streams = sqlx::query_as::<_, MediaStream>(
+        "SELECT * FROM media_streams WHERE media_item_id = ? ORDER BY stream_index",
+    )
+    .bind(body.media_item_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
+
+    let client_caps = transcoding::ClientCapabilities {
+        video_codecs: body.supported_video_codecs,
+        audio_codecs: body.supported_audio_codecs,
+        containers: body.supported_containers,
+    };
+    let mode = transcoding::decide_transcode_mode(&streams, item.container_format.as_deref(), &client_caps);
 
     // Generate token
     let token = {
@@ -85,10 +125,46 @@ async fn create_stream_token(
         hex::encode(bytes)
     };
 
+    let (stream_url, transcode_session_id) = if mode == transcoding::TranscodeMode::Direct {
+        (
+            format!("/api/stream/{}?token={}", body.media_item_id, token),
+            None,
+        )
+    } else {
+        // Start transcode session
+        let video_stream = streams.iter().find(|s| s.stream_type == "video");
+        let audio_stream = streams.iter().find(|s| s.stream_type == "audio");
+
+        let session = state
+            .transcode_manager
+            .start_session(
+                body.media_item_id,
+                &file_path,
+                mode,
+                video_stream,
+                audio_stream,
+                body.start_time,
+            )
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("Transcode start failed: {}", e)))?;
+
+        // Wait for first segment (with timeout)
+        let sid = session.session_id.clone();
+        if !session.wait_until_ready(std::time::Duration::from_secs(30)).await {
+            tracing::warn!("Timed out waiting for transcode to produce first segment");
+        }
+
+        (
+            format!("/api/hls/{}/stream.m3u8?token={}", sid, token),
+            Some(sid),
+        )
+    };
+
     let data = StreamTokenData {
         user_id,
         media_item_id: body.media_item_id,
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        transcode_session_id: transcode_session_id.clone(),
     };
 
     state.stream_tokens.write().await.insert(token.clone(), data);
@@ -101,9 +177,51 @@ async fn create_stream_token(
         .await
         .retain(|_, v| v.expires_at > now);
 
-    let stream_url = format!("/api/stream/{}?token={}", body.media_item_id, token);
+    Ok(Json(StreamTokenResponse {
+        token,
+        stream_url,
+        mode: mode.as_str().to_string(),
+        title: item.title.clone(),
+        duration_seconds: item.duration_seconds,
+        transcode_session_id,
+    }))
+}
 
-    Ok(Json(StreamTokenResponse { token, stream_url }))
+// ---------------------------------------------------------------------------
+// Transcode seek
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct TranscodeSeekRequest {
+    session_id: String,
+    seek_time: f64,
+}
+
+#[derive(Serialize)]
+struct TranscodeSeekResponse {
+    ready: bool,
+    seek_time: f64,
+}
+
+async fn transcode_seek(
+    AuthUser(_): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TranscodeSeekRequest>,
+) -> ApiResult<Json<TranscodeSeekResponse>> {
+    let session = state
+        .transcode_manager
+        .seek_session(&body.session_id, body.seek_time)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("Seek failed: {}", e)))?;
+
+    let ready = session
+        .wait_until_ready(std::time::Duration::from_secs(30))
+        .await;
+
+    Ok(Json(TranscodeSeekResponse {
+        ready,
+        seek_time: body.seek_time,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +497,92 @@ where
             other => other,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// HLS serving
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct OptionalTokenQuery {
+    token: Option<String>,
+}
+
+async fn serve_hls(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, path)): Path<(String, String)>,
+    Query(query): Query<OptionalTokenQuery>,
+) -> Result<Response, ApiError> {
+    // Validate token if provided
+    if let Some(ref token) = query.token {
+        let tokens = state.stream_tokens.read().await;
+        if let Some(token_data) = tokens.get(token) {
+            if token_data.expires_at < chrono::Utc::now() {
+                return Err(ApiError::Unauthorized);
+            }
+        } else {
+            return Err(ApiError::Unauthorized);
+        }
+    }
+
+    // Get session
+    let session = state
+        .transcode_manager
+        .get_session(&session_id)
+        .await
+        .ok_or(ApiError::NotFound("Transcode session not found".into()))?;
+
+    // Sanitize path — reject directory traversal
+    if path.contains("..") {
+        return Err(ApiError::BadRequest("Invalid path".into()));
+    }
+
+    let file_path = session.output_dir.join(&path);
+
+    // Wait for the file if it doesn't exist yet (FFmpeg may still be producing it)
+    let wait_duration = if path.ends_with(".ts") {
+        std::time::Duration::from_secs(10)
+    } else {
+        std::time::Duration::from_secs(5)
+    };
+    let deadline = tokio::time::Instant::now() + wait_duration;
+
+    let file = loop {
+        match tokio::fs::File::open(&file_path).await {
+            Ok(f) => break f,
+            Err(_) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(_) => {
+                return Err(ApiError::NotFound(format!("HLS file not found: {}", path)));
+            }
+        }
+    };
+
+    let metadata = file.metadata().await.map_err(|e| {
+        ApiError::Internal(anyhow::anyhow!("Failed to read file metadata: {}", e))
+    })?;
+
+    let (content_type, cache_control) = if path.ends_with(".m3u8") {
+        ("application/vnd.apple.mpegurl", "no-cache, no-store")
+    } else if path.ends_with(".ts") {
+        // Segments get replaced on seek (same filename, new content),
+        // so we must not cache them
+        ("video/mp2t", "no-cache, no-store")
+    } else {
+        ("application/octet-stream", "no-cache")
+    };
+
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, metadata.len())
+        .header(header::CACHE_CONTROL, cache_control)
+        .body(body)
+        .unwrap())
 }
 
 // ---------------------------------------------------------------------------
