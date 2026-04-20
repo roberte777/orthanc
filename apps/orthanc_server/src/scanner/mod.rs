@@ -71,6 +71,14 @@ async fn scan_all_due_libraries(
         }
     };
 
+    // Admin-controlled default scan interval, applied when a library row has no
+    // explicit `scan_interval_minutes`. Falls back to the hardcoded default if unset.
+    let default_interval = crate::api::settings::read_setting(db, "library_scan_interval_minutes")
+        .await
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&m| m > 0)
+        .unwrap_or(DEFAULT_SCAN_INTERVAL_MINUTES);
+
     for lib in &libraries {
         // Check if library has paths
         let path_count: (i64,) = sqlx::query_as(
@@ -85,12 +93,12 @@ async fn scan_all_due_libraries(
             continue;
         }
 
-        // Determine scan interval
+        // Determine scan interval: per-library override > admin default > hardcoded fallback.
         let interval_mins = lib
             .scan_interval_minutes
             .filter(|&m| m > 0)
             .map(|m| m as u64)
-            .unwrap_or(DEFAULT_SCAN_INTERVAL_MINUTES);
+            .unwrap_or(default_interval);
 
         // Check if enough time has passed since last scan
         if let Some(ref last_scan) = lib.last_scan_at {

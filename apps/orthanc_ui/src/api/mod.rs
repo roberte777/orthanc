@@ -100,6 +100,14 @@ pub struct UpdateSettingRequest {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct UserPreferences {
+    pub preferred_audio_language: Option<String>,
+    pub preferred_subtitle_language: Option<String>,
+    pub subtitles_enabled_default: bool,
+    pub audio_normalize_default: bool,
+}
+
 // ── Libraries ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -373,6 +381,17 @@ pub async fn change_password(token: &str, req: ChangePasswordRequest) -> Result<
     let _ =
         put_json::<serde_json::Value>("/api/settings/password", &req, Some(token)).await?;
     Ok(())
+}
+
+pub async fn get_user_preferences(token: &str) -> Result<UserPreferences, String> {
+    get_json("/api/settings/preferences", Some(token)).await
+}
+
+pub async fn update_user_preferences(
+    token: &str,
+    prefs: &UserPreferences,
+) -> Result<UserPreferences, String> {
+    put_json("/api/settings/preferences", prefs, Some(token)).await
 }
 
 // ── Streaming ──

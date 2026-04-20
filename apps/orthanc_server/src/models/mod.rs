@@ -5,3 +5,4 @@ pub mod session;
 pub mod track_preference;
 pub mod transcoding_profile;
 pub mod user;
+pub mod user_preference;

@@ -5,17 +5,25 @@ struct SettingMeta {
     key: &'static str,
     label: &'static str,
     section: &'static str,
+    secret: bool,
 }
 
 const KNOWN_SETTINGS: &[SettingMeta] = &[
-    SettingMeta { key: "server_name",                   label: "Server Name",                 section: "General" },
-    SettingMeta { key: "allow_guest_access",            label: "Allow Guest Access",          section: "General" },
-    SettingMeta { key: "transcoding_enabled",           label: "Enable Transcoding",          section: "Streaming" },
-    SettingMeta { key: "default_quality",               label: "Default Quality",             section: "Streaming" },
-    SettingMeta { key: "library_scan_interval_minutes", label: "Library Scan Interval (min)", section: "Libraries" },
+    SettingMeta { key: "server_name",                   label: "Server Name",                  section: "General",   secret: false },
+    SettingMeta { key: "library_scan_interval_minutes", label: "Default Scan Interval (min)",  section: "Libraries", secret: false },
+    SettingMeta { key: "max_concurrent_streams",        label: "Max Concurrent Streams",       section: "Streaming", secret: false },
+    SettingMeta { key: "max_concurrent_transcodes",     label: "Max Concurrent Transcodes",    section: "Streaming", secret: false },
+    SettingMeta { key: "stream_token_expiry_minutes",   label: "Stream Token Expiry (min)",    section: "Streaming", secret: false },
+    SettingMeta { key: "subtitle_cache_max_mb",         label: "Subtitle Cache Max (MB)",      section: "Cache",     secret: false },
+    SettingMeta { key: "tmdb_api_key",                  label: "TMDB API Key",                 section: "Metadata",  secret: true  },
+    SettingMeta { key: "tvdb_api_key",                  label: "TVDB API Key",                 section: "Metadata",  secret: true  },
 ];
 
-const SECTIONS: &[&str] = &["General", "Streaming", "Libraries"];
+fn is_secret(key: &str) -> bool {
+    KNOWN_SETTINGS.iter().find(|m| m.key == key).map(|m| m.secret).unwrap_or(false)
+}
+
+const SECTIONS: &[&str] = &["General", "Libraries", "Streaming", "Cache", "Metadata"];
 
 fn label_for(key: &str) -> &'static str {
     KNOWN_SETTINGS.iter().find(|m| m.key == key).map(|m| m.label).unwrap_or("Unknown")
@@ -146,6 +154,17 @@ pub fn AdminSettings() -> Element {
                                                             class: "form-input setting-input",
                                                             r#type: "number",
                                                             value: "{current_value}",
+                                                            oninput: move |e| {
+                                                                edits.write().insert(key.clone(), e.value());
+                                                            },
+                                                        }
+                                                    } else if is_secret(&key2) {
+                                                        input {
+                                                            class: "form-input setting-input",
+                                                            r#type: "password",
+                                                            placeholder: "Using built-in default",
+                                                            value: "{current_value}",
+                                                            autocomplete: "off",
                                                             oninput: move |e| {
                                                                 edits.write().insert(key.clone(), e.value());
                                                             },

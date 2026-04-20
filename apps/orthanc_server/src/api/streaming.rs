@@ -4,7 +4,10 @@ use crate::{
         state::{AppState, StreamTokenData},
     },
     auth::middleware::AuthUser,
-    models::{media::MediaItem, media_stream::MediaStream, track_preference},
+    models::{
+        media::MediaItem, media_stream::MediaStream, track_preference,
+        track_preference::TrackPreference, user_preference,
+    },
     transcoding,
 };
 use axum::{
@@ -187,12 +190,28 @@ async fn create_stream_token(
 
     // Load saved track preference for this user's scope (show for episodes,
     // movie otherwise). Used as a fallback when the request doesn't pin tracks.
+    // If no per-show row exists, fall through to the user's global defaults.
     let scope_id = track_preference::resolve_scope_media_item_id(&state.db, body.media_item_id)
         .await
         .map_err(ApiError::Internal)?;
-    let pref = track_preference::load_preference(&state.db, user_id, scope_id)
+    let per_media_pref = track_preference::load_preference(&state.db, user_id, scope_id)
         .await
         .map_err(ApiError::Internal)?;
+    let pref: Option<TrackPreference> = match per_media_pref {
+        Some(p) => Some(p),
+        None => user_preference::load_preference(&state.db, user_id)
+            .await
+            .map_err(ApiError::Internal)?
+            .map(|g| TrackPreference {
+                user_id,
+                scope_media_item_id: scope_id,
+                audio_language: g.preferred_audio_language,
+                subtitle_language: g.preferred_subtitle_language,
+                subtitles_enabled: g.subtitles_enabled_default,
+                audio_normalize: g.audio_normalize_default,
+                updated_at: g.updated_at,
+            }),
+    };
 
     // Resolve burn request (if any) before picking a mode — a burn forces FullTranscode.
     let mut burn_stream: Option<MediaStream> = None;
@@ -329,10 +348,16 @@ async fn create_stream_token(
     // Best-effort pre-warm; we don't block on it here.
     drop(prewarm_handle);
 
+    let expiry_minutes = crate::api::settings::read_setting(&state.db, "stream_token_expiry_minutes")
+        .await
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|&m| m > 0)
+        .unwrap_or(5);
+
     let data = StreamTokenData {
         user_id,
         media_item_id: body.media_item_id,
-        expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(expiry_minutes),
         transcode_session_id: transcode_session_id.clone(),
     };
 

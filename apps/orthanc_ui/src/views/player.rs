@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 use web_sys::wasm_bindgen::{self, JsCast};
 
 use crate::api;
-use crate::state::{with_refresh, AuthState};
+use crate::state::{self, with_refresh, AuthState};
+use crate::views::settings::{LS_DEFAULT_VOLUME, LS_SKIP_SECONDS};
 
 fn get_video() -> Option<web_sys::HtmlVideoElement> {
     let window = web_sys::window()?;
@@ -223,7 +224,16 @@ pub fn Player(id: i64) -> Element {
     let mut current_time = use_signal(|| 0.0_f64);
     let mut duration = use_signal(|| 0.0_f64);
     let mut show_controls = use_signal(|| true);
-    let mut volume = use_signal(|| 1.0_f64);
+    let mut last_activity = use_signal(|| js_sys::Date::now());
+    let initial_volume = state::storage_get(LS_DEFAULT_VOLUME)
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|v| v.clamp(0.0, 1.0))
+        .unwrap_or(1.0);
+    let mut volume = use_signal(|| initial_volume);
+    let skip_seconds = state::storage_get(LS_SKIP_SECONDS)
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|&s| s > 0.0)
+        .unwrap_or(10.0);
     let mut title = use_signal(|| String::new());
     let mut last_save_time = use_signal(|| 0.0_f64);
     let mut transcode_session_id = use_signal(|| None::<String>);
@@ -495,8 +505,8 @@ pub fn Player(id: i64) -> Element {
                 video.set_volume(0.0);
                 volume.set(0.0);
             } else {
-                video.set_volume(1.0);
-                volume.set(1.0);
+                video.set_volume(initial_volume);
+                volume.set(initial_volume);
             }
         }
     };
@@ -605,10 +615,10 @@ pub fn Player(id: i64) -> Element {
     let skip_back = move |_| {
         if let Some(video) = get_video() {
             if transcode_session_id().is_some() {
-                let new_time = (current_time() - 10.0).max(0.0);
+                let new_time = (current_time() - skip_seconds).max(0.0);
                 seek_to(new_time);
             } else {
-                let new_time = (video.current_time() - 10.0).max(0.0);
+                let new_time = (video.current_time() - skip_seconds).max(0.0);
                 video.set_current_time(new_time);
                 current_time.set(new_time);
             }
@@ -618,11 +628,11 @@ pub fn Player(id: i64) -> Element {
     let skip_forward = move |_| {
         if let Some(video) = get_video() {
             if transcode_session_id().is_some() {
-                let new_time = (current_time() + 10.0).min(duration());
+                let new_time = (current_time() + skip_seconds).min(duration());
                 seek_to(new_time);
             } else {
                 let dur = video.duration();
-                let new_time = (video.current_time() + 10.0).min(if dur.is_finite() { dur } else { f64::MAX });
+                let new_time = (video.current_time() + skip_seconds).min(if dur.is_finite() { dur } else { f64::MAX });
                 video.set_current_time(new_time);
                 current_time.set(new_time);
             }
@@ -663,8 +673,37 @@ pub fn Player(id: i64) -> Element {
     };
 
     let on_mouse_move = move |_: MouseEvent| {
-        show_controls.set(true);
+        last_activity.set(js_sys::Date::now());
+        if !show_controls() {
+            show_controls.set(true);
+        }
     };
+
+    // Auto-hide the overlay (and cursor) after a few seconds of inactivity,
+    // unless the video is paused or a menu is open. The polling loop is owned
+    // by this scope, so Dioxus cancels it when the player unmounts.
+    use_effect(move || {
+        spawn(async move {
+            loop {
+                let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
+                    let _ = web_sys::window().unwrap()
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
+                });
+                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+
+                if subtitle_menu_open() || audio_menu_open() || !is_playing() {
+                    if !show_controls() {
+                        show_controls.set(true);
+                    }
+                    continue;
+                }
+
+                if show_controls() && js_sys::Date::now() - last_activity() > 3000.0 {
+                    show_controls.set(false);
+                }
+            }
+        });
+    });
 
     let toggle_fullscreen = move |_| {
         if let Some(window) = web_sys::window() {
@@ -1108,7 +1147,7 @@ pub fn Player(id: i64) -> Element {
     rsx! {
         div {
             id: "player-container",
-            class: "player-container",
+            class: if show_controls() { "player-container" } else { "player-container idle" },
             onmousemove: on_mouse_move,
             onclick: toggle_play,
 
@@ -1151,6 +1190,7 @@ pub fn Player(id: i64) -> Element {
                     },
                     onloadedmetadata: move |_| {
                         if let Some(video) = get_video() {
+                            video.set_volume(initial_volume);
                             let d = video.duration();
                             if d.is_finite() && d > 0.0 && duration() < 1.0
                                 && transcode_session_id().is_none()

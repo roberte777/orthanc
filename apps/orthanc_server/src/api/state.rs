@@ -36,23 +36,52 @@ pub struct AppState {
     pub subtitle_manager: Arc<crate::subtitles::SubtitleManager>,
 }
 
+/// Admin-configurable values resolved from the `settings` table at startup.
+/// Precedence at boot: DB (non-empty) > env var > built-in default.
+#[derive(Default, Debug)]
+struct AdminOverrides {
+    tmdb_api_key: Option<String>,
+    tvdb_api_key: Option<String>,
+    max_concurrent_streams: Option<usize>,
+    max_concurrent_transcodes: Option<usize>,
+}
+
+async fn load_admin_overrides(db: &DbPool) -> AdminOverrides {
+    let mut o = AdminOverrides::default();
+    let rows = sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+    for (key, value) in rows {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match key.as_str() {
+            "tmdb_api_key" => o.tmdb_api_key = Some(trimmed.to_string()),
+            "tvdb_api_key" => o.tvdb_api_key = Some(trimmed.to_string()),
+            "max_concurrent_streams" => o.max_concurrent_streams = trimmed.parse().ok(),
+            "max_concurrent_transcodes" => o.max_concurrent_transcodes = trimmed.parse().ok(),
+            _ => {}
+        }
+    }
+    o
+}
+
 impl AppState {
     /// Build AppState using env vars for paths and the DB to resolve library roots.
     pub async fn from_env_async(db: DbPool) -> Self {
         let library_roots = load_library_roots(&db).await;
-        Self::from_env_with_roots(db, library_roots)
-    }
-
-    pub fn from_env_with_roots(db: DbPool, library_roots: Vec<PathBuf>) -> Self {
-        Self::build(db, library_roots)
+        let overrides = load_admin_overrides(&db).await;
+        Self::build(db, library_roots, overrides)
     }
 
     #[cfg(test)]
     pub fn from_env(db: DbPool) -> Self {
-        Self::build(db, Vec::new())
+        Self::build(db, Vec::new(), AdminOverrides::default())
     }
 
-    fn build(db: DbPool, library_roots: Vec<PathBuf>) -> Self {
+    fn build(db: DbPool, library_roots: Vec<PathBuf>, overrides: AdminOverrides) -> Self {
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set, using random secret (not suitable for production)");
             use rand::RngExt;
@@ -67,15 +96,18 @@ impl AppState {
         const DEFAULT_TMDB_API_KEY: &str = "90c1d19c76fe6f06350a3df495e75365";
 
         let tmdb_api_key = Some(
-            std::env::var("TMDB_API_KEY").unwrap_or_else(|_| DEFAULT_TMDB_API_KEY.to_string()),
+            overrides.tmdb_api_key.clone().unwrap_or_else(|| {
+                std::env::var("TMDB_API_KEY").unwrap_or_else(|_| DEFAULT_TMDB_API_KEY.to_string())
+            }),
         );
 
         // Embedded TVDB project API key (like Jellyfin's TvdbPlugin). Users may
-        // override with their own subscriber key via TVDB_API_KEY.
+        // override with their own subscriber key via the admin settings UI or TVDB_API_KEY.
         const DEFAULT_TVDB_API_KEY: &str = "91090b09-8411-4b64-834a-733ab3f12a07";
 
-        let tvdb_api_key =
-            std::env::var("TVDB_API_KEY").unwrap_or_else(|_| DEFAULT_TVDB_API_KEY.to_string());
+        let tvdb_api_key = overrides.tvdb_api_key.clone().unwrap_or_else(|| {
+            std::env::var("TVDB_API_KEY").unwrap_or_else(|_| DEFAULT_TVDB_API_KEY.to_string())
+        });
 
         let image_cache_dir = std::env::var("IMAGE_CACHE_DIR")
             .unwrap_or_else(|_| "./image_cache".to_string());
@@ -85,10 +117,12 @@ impl AppState {
             tracing::error!("Failed to create image cache dir '{}': {}", image_cache_dir, e);
         }
 
-        let max_concurrent_streams = std::env::var("MAX_CONCURRENT_STREAMS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(3);
+        let max_concurrent_streams = overrides.max_concurrent_streams.unwrap_or_else(|| {
+            std::env::var("MAX_CONCURRENT_STREAMS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3)
+        });
 
         let max_bandwidth_bytes_per_sec = std::env::var("MAX_BANDWIDTH_MBPS")
             .ok()
@@ -104,10 +138,12 @@ impl AppState {
             tracing::error!("Failed to create transcode cache dir '{}': {}", transcode_cache_dir, e);
         }
 
-        let max_concurrent_transcodes = std::env::var("MAX_CONCURRENT_TRANSCODES")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2);
+        let max_concurrent_transcodes = overrides.max_concurrent_transcodes.unwrap_or_else(|| {
+            std::env::var("MAX_CONCURRENT_TRANSCODES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2)
+        });
 
         let transcode_manager = Arc::new(crate::transcoding::TranscodeSessionManager::new(
             transcode_cache_dir.clone().into(),

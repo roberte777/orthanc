@@ -8,6 +8,7 @@ use crate::{
         password::{hash_password, verify_password},
     },
     models::user::UserResponse,
+    models::user_preference,
 };
 use axum::{
     extract::State,
@@ -21,6 +22,7 @@ pub fn user_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/profile", get(get_profile).put(update_profile))
         .route("/password", put(change_password))
+        .route("/preferences", get(get_user_preferences).put(update_user_preferences))
 }
 
 pub fn admin_router() -> Router<Arc<AppState>> {
@@ -118,6 +120,74 @@ async fn change_password(
     Ok(Json(serde_json::json!({"message": "Password updated"})))
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct UserPreferencesResponse {
+    pub preferred_audio_language: Option<String>,
+    pub preferred_subtitle_language: Option<String>,
+    pub subtitles_enabled_default: bool,
+    pub audio_normalize_default: bool,
+}
+
+async fn get_user_preferences(
+    AuthUser(claims): AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<UserPreferencesResponse>> {
+    let user_id: i64 = claims.sub.parse().map_err(|_| ApiError::Unauthorized)?;
+    let pref = user_preference::load_preference(&state.db, user_id)
+        .await
+        .map_err(ApiError::Internal)?;
+    let resp = pref
+        .map(|p| UserPreferencesResponse {
+            preferred_audio_language: p.preferred_audio_language,
+            preferred_subtitle_language: p.preferred_subtitle_language,
+            subtitles_enabled_default: p.subtitles_enabled_default,
+            audio_normalize_default: p.audio_normalize_default,
+        })
+        .unwrap_or_default();
+    Ok(Json(resp))
+}
+
+#[derive(Deserialize)]
+struct UpdateUserPreferencesRequest {
+    preferred_audio_language: Option<String>,
+    preferred_subtitle_language: Option<String>,
+    subtitles_enabled_default: bool,
+    audio_normalize_default: bool,
+}
+
+async fn update_user_preferences(
+    AuthUser(claims): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateUserPreferencesRequest>,
+) -> ApiResult<Json<UserPreferencesResponse>> {
+    let user_id: i64 = claims.sub.parse().map_err(|_| ApiError::Unauthorized)?;
+    let audio = req.preferred_audio_language.as_deref().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    let subs = req.preferred_subtitle_language.as_deref().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    user_preference::upsert_preference(
+        &state.db,
+        user_id,
+        audio,
+        subs,
+        req.subtitles_enabled_default,
+        req.audio_normalize_default,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    Ok(Json(UserPreferencesResponse {
+        preferred_audio_language: audio.map(|s| s.to_string()),
+        preferred_subtitle_language: subs.map(|s| s.to_string()),
+        subtitles_enabled_default: req.subtitles_enabled_default,
+        audio_normalize_default: req.audio_normalize_default,
+    }))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Setting {
     pub key: String,
@@ -128,6 +198,9 @@ pub struct Setting {
 
 /// Known server settings with their defaults.
 /// These are returned even if not yet stored in the DB.
+///
+/// For API-key settings, an empty value means "fall back to the built-in/env default"
+/// so the server ships with working defaults out of the box.
 fn default_settings() -> Vec<Setting> {
     vec![
         Setting {
@@ -137,28 +210,65 @@ fn default_settings() -> Vec<Setting> {
             description: Some("Display name for this server".into()),
         },
         Setting {
-            key: "transcoding_enabled".into(),
-            value: "false".into(),
-            value_type: "boolean".into(),
-            description: Some("Enable on-the-fly video transcoding".into()),
-        },
-        Setting {
-            key: "default_quality".into(),
-            value: "1080p".into(),
-            value_type: "string".into(),
-            description: Some("Default streaming quality (480p, 720p, 1080p, 4k)".into()),
-        },
-        Setting {
             key: "library_scan_interval_minutes".into(),
             value: "60".into(),
             value_type: "integer".into(),
-            description: Some("How often to auto-scan media libraries (minutes)".into()),
+            description: Some(
+                "Default auto-scan interval for libraries that don't set their own (minutes). Applies on next scan tick."
+                    .into(),
+            ),
         },
         Setting {
-            key: "allow_guest_access".into(),
-            value: "false".into(),
-            value_type: "boolean".into(),
-            description: Some("Allow unauthenticated users to browse media".into()),
+            key: "max_concurrent_streams".into(),
+            value: "3".into(),
+            value_type: "integer".into(),
+            description: Some(
+                "Maximum simultaneous video streams across all users. Requires restart.".into(),
+            ),
+        },
+        Setting {
+            key: "max_concurrent_transcodes".into(),
+            value: "2".into(),
+            value_type: "integer".into(),
+            description: Some(
+                "Maximum simultaneous FFmpeg transcode jobs. Requires restart.".into(),
+            ),
+        },
+        Setting {
+            key: "stream_token_expiry_minutes".into(),
+            value: "5".into(),
+            value_type: "integer".into(),
+            description: Some(
+                "How long a stream authorization token stays valid before a client must request a new one."
+                    .into(),
+            ),
+        },
+        Setting {
+            key: "subtitle_cache_max_mb".into(),
+            value: "500".into(),
+            value_type: "integer".into(),
+            description: Some(
+                "Maximum size of the extracted-subtitle cache. Enforced on the next sweep."
+                    .into(),
+            ),
+        },
+        Setting {
+            key: "tmdb_api_key".into(),
+            value: String::new(),
+            value_type: "string".into(),
+            description: Some(
+                "Override the built-in TMDB API key. Leave blank to use the shipped default. Requires restart."
+                    .into(),
+            ),
+        },
+        Setting {
+            key: "tvdb_api_key".into(),
+            value: String::new(),
+            value_type: "string".into(),
+            description: Some(
+                "Override the built-in TVDB API key. Leave blank to use the shipped default. Requires restart."
+                    .into(),
+            ),
         },
     ]
 }
@@ -174,17 +284,15 @@ async fn get_server_settings(
     .await
     .map_err(anyhow::Error::from)?;
 
-    // Start with defaults, then overlay with whatever is stored in the DB
+    // Start with defaults, then overlay stored values *only* for keys we still
+    // recognize. This hides rows left behind by past versions of the schema.
     let mut result = default_settings();
-    for (key, value, value_type, description) in rows {
+    for (key, value, _db_value_type, description) in rows {
         if let Some(s) = result.iter_mut().find(|s| s.key == key) {
             s.value = value;
-            s.value_type = value_type;
             if description.is_some() {
                 s.description = description;
             }
-        } else {
-            result.push(Setting { key, value, value_type, description });
         }
     }
 
@@ -202,12 +310,12 @@ async fn update_server_settings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UpdateSettingRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    // Look up value_type from defaults, fall back to "string"
-    let value_type = default_settings()
-        .into_iter()
+    // Reject unknown keys so the settings table can't be used as a scratchpad.
+    let defaults = default_settings();
+    let meta = defaults
+        .iter()
         .find(|s| s.key == req.key)
-        .map(|s| s.value_type)
-        .unwrap_or_else(|| "string".into());
+        .ok_or_else(|| ApiError::BadRequest(format!("Unknown setting key: {}", req.key)))?;
 
     sqlx::query(
         "INSERT INTO settings (key, value, value_type, updated_at) VALUES (?, ?, ?, datetime('now'))
@@ -215,10 +323,22 @@ async fn update_server_settings(
     )
     .bind(&req.key)
     .bind(&req.value)
-    .bind(&value_type)
+    .bind(&meta.value_type)
     .execute(&state.db)
     .await
     .map_err(anyhow::Error::from)?;
 
     Ok(Json(serde_json::json!({"message": "Setting updated"})))
+}
+
+/// Fetch a setting from the `settings` table by key, returning its value if present.
+/// Used by startup and runtime code to read admin-controlled values with sensible fallbacks.
+pub async fn read_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
+    sqlx::query_as::<_, (String,)>("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|(v,)| v)
 }

@@ -1689,9 +1689,9 @@ a {
   height: 100vh;
   background: #000;
   z-index: 9999;
-  cursor: none;
+  cursor: default;
 }
-.player-container:hover { cursor: default; }
+.player-container.idle { cursor: none; }
 
 .player-video {
   width: 100%;

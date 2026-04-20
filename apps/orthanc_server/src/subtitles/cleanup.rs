@@ -121,10 +121,13 @@ pub fn full_sweep(cache_dir: &Path, live_ids: &HashSet<i64>, max_bytes: u64) {
 }
 
 /// Periodic loop: sweep every `interval`, using the DB to source live ids.
+/// Reads the `subtitle_cache_max_mb` admin setting each tick so an admin change
+/// takes effect on the next sweep without needing a restart. Falls back to
+/// `default_max_bytes` if the setting is unset or unparseable.
 pub async fn run_cleanup_loop(
     cache_dir: PathBuf,
     db: sqlx::SqlitePool,
-    max_bytes: u64,
+    default_max_bytes: u64,
     interval: std::time::Duration,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -139,6 +142,11 @@ pub async fn run_cleanup_loop(
                 continue;
             }
         };
+        let max_bytes = crate::api::settings::read_setting(&db, "subtitle_cache_max_mb")
+            .await
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|mb| mb.saturating_mul(1_024 * 1_024))
+            .unwrap_or(default_max_bytes);
         let cache_dir = cache_dir.clone();
         let _ = tokio::task::spawn_blocking(move || {
             full_sweep(&cache_dir, &live_ids, max_bytes)

@@ -74,6 +74,37 @@ pub fn clear_auth() {
     }
 }
 
+/// Read a string from browser localStorage (WASM-only; returns None elsewhere).
+pub fn storage_get(key: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item(key).ok().flatten());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = key;
+        None
+    }
+}
+
+/// Write a string to browser localStorage. No-op off WASM.
+pub fn storage_set(key: &str, value: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(storage) = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+        {
+            let _ = storage.set_item(key, value);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (key, value);
+    }
+}
+
 /// Wraps an authenticated API call with automatic token refresh on 401.
 ///
 /// If the call fails with a 401, attempts to refresh the access token using

@@ -147,10 +147,10 @@ is consuming at. Should also indicate if doing any kinds of transcoding
 - [x] Add subtitle burning (hardcoded) option
 
 ### 5.2 Audio Track Support
-- [ ] Detect multiple audio tracks
-- [ ] Allow audio track selection
-- [ ] Support audio transcoding
-- [ ] Handle audio normalization
+- [x] Detect multiple audio tracks
+- [x] Allow audio track selection
+- [x] Support audio transcoding
+- [x] Handle audio normalization
 
 ### 5.3 Watch History
 - [ ] Track playback progress per user
