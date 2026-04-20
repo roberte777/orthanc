@@ -140,11 +140,11 @@ is consuming at. Should also indicate if doing any kinds of transcoding
 ## Phase 5: Playback Features
 
 ### 5.1 Subtitle Support
-- [ ] Extract embedded subtitles from video files
-- [ ] Support external subtitle files (.srt, .ass, .vtt)
-- [ ] Convert subtitles to WebVTT for streaming
-- [ ] Implement subtitle track selection API
-- [ ] Add subtitle burning (hardcoded) option
+- [x] Extract embedded subtitles from video files
+- [x] Support external subtitle files (.srt, .ass, .vtt)
+- [x] Convert subtitles to WebVTT for streaming
+- [x] Implement subtitle track selection API
+- [x] Add subtitle burning (hardcoded) option
 
 ### 5.2 Audio Track Support
 - [ ] Detect multiple audio tracks
