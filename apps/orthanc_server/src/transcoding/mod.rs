@@ -437,6 +437,12 @@ impl TranscodeSessionManager {
             cmd.args(["-ss", &format!("{:.3}", start_time)]);
         }
 
+        // Regenerate PTS if the input is missing or inconsistent — helps hls.js
+        // see clean timestamps and avoids the "audio starts late" effect that
+        // comes from fast-seeking into a stream where video and audio packets
+        // don't share a common origin.
+        cmd.args(["-fflags", "+genpts"]);
+
         cmd.arg("-i").arg(file_path);
         cmd.args(["-y", "-nostdin"]);
 
@@ -450,7 +456,18 @@ impl TranscodeSessionManager {
                 cmd.args(["-c", "copy"]);
             }
             TranscodeMode::AudioTranscode => {
-                cmd.args(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2"]);
+                // -af aresample=async=1:first_pts=0 pads leading silence so
+                // audio aligns with video from frame 0; without it the AAC
+                // encoder's priming delay plus any gap between the video
+                // keyframe and nearest audio packet produces a noticeable
+                // "video starts, audio joins later" effect.
+                cmd.args([
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-ac", "2",
+                    "-af", "aresample=async=1:first_pts=0",
+                ]);
             }
             TranscodeMode::FullTranscode => {
                 let height = video_height.map(|h| h.min(1080)).unwrap_or(1080);
@@ -485,10 +502,24 @@ impl TranscodeSessionManager {
                     "-c:a", "aac",
                     "-b:a", "192k",
                     "-ac", "2",
+                    "-af", "aresample=async=1:first_pts=0",
                 ]);
             }
             TranscodeMode::Direct => unreachable!(),
         }
+
+        // Normalize timestamps: force the minimum PTS across streams to 0 so
+        // video and audio share a common origin in the HLS output. Without
+        // this, fast-seek (`-ss` before `-i`) can leave audio with a small
+        // positive offset relative to video.
+        cmd.args(["-avoid_negative_ts", "make_zero"]);
+
+        // Eliminate the MPEG-TS muxer's default buffering (700ms) that FFmpeg
+        // inserts for broadcast decoder priming. For HLS playback this just
+        // manifests as a dead-air gap at the start of the first segment —
+        // video frames arrive, audio packets don't, hls.js plays the video
+        // and waits for audio to catch up.
+        cmd.args(["-muxdelay", "0", "-muxpreload", "0"]);
 
         cmd.args([
             "-f",
