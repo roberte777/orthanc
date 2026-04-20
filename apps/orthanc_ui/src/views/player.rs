@@ -104,10 +104,10 @@ fn install_subtitle_bridge() {
                 if (isDefault) tr.default = true;
                 tr.setAttribute('data-orthanc-sub', '1');
                 tr.addEventListener('error', function(e) {
-                    console.error('[orthanc] subtitle track load error', e, url);
+                    console.error('[orthanc] subtitle track load error for url=' + url + ' err=' + (e && e.message ? e.message : 'unknown'));
                 });
                 video.appendChild(tr);
-                console.debug('[orthanc] subtitle track attached', { url: url, label: label, lang: lang });
+                console.debug('[orthanc] subtitle track attached: ' + label + ' (' + lang + ') url=' + url);
                 var forceShow = function() {
                     try {
                         if (tr.track) { tr.track.mode = 'showing'; }
@@ -123,7 +123,7 @@ fn install_subtitle_bridge() {
                     }
                 };
                 tr.addEventListener('load', function() {
-                    console.debug('[orthanc] subtitle track loaded', url);
+                    console.debug('[orthanc] subtitle track loaded url=' + url);
                     forceShow();
                 });
                 setTimeout(forceShow, 60);
