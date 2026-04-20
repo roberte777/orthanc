@@ -72,6 +72,25 @@ async fn main() -> anyhow::Result<()> {
         let subtitle_dir = std::path::PathBuf::from(&state.subtitle_cache_dir);
         let max_bytes = state.subtitle_cache_max_bytes;
         let db = pool.clone();
+
+        // Startup sweep: remove orphans left over from a previous run.
+        {
+            let subtitle_dir = subtitle_dir.clone();
+            let db = db.clone();
+            let live_ids = sqlx::query_as::<_, (i64,)>(
+                "SELECT id FROM media_streams WHERE stream_type = 'subtitle'",
+            )
+            .fetch_all(&db)
+            .await
+            .map(|rows| rows.into_iter().map(|(id,)| id).collect::<std::collections::HashSet<_>>())
+            .unwrap_or_default();
+            tokio::task::spawn_blocking(move || {
+                subtitles::cleanup::full_sweep(&subtitle_dir, &live_ids, max_bytes);
+            })
+            .await
+            .ok();
+        }
+
         tokio::spawn(async move {
             subtitles::cleanup::run_cleanup_loop(
                 subtitle_dir,
