@@ -391,6 +391,18 @@ pub struct SubtitleTrack {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioTrack {
+    pub id: i64,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: Option<String>,
+    pub channels: Option<i32>,
+    pub sample_rate: Option<i32>,
+    pub bit_rate: Option<i32>,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamTokenResponse {
     pub token: String,
     pub stream_url: String,
@@ -404,6 +416,12 @@ pub struct StreamTokenResponse {
     pub burned_subtitle_id: Option<i64>,
     #[serde(default)]
     pub transcode_actual_start_seconds: Option<f64>,
+    #[serde(default)]
+    pub audio_tracks: Vec<AudioTrack>,
+    #[serde(default)]
+    pub selected_audio_stream_id: Option<i64>,
+    #[serde(default)]
+    pub audio_normalize: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -447,6 +465,8 @@ pub async fn get_stream_token(
     supported_containers: Vec<String>,
     start_time: f64,
     burn_subtitle_id: Option<i64>,
+    audio_stream_id: Option<i64>,
+    audio_normalize: bool,
 ) -> Result<StreamTokenResponse, String> {
     let mut body = serde_json::json!({
         "media_item_id": media_id,
@@ -454,11 +474,33 @@ pub async fn get_stream_token(
         "supported_video_codecs": supported_video_codecs,
         "supported_audio_codecs": supported_audio_codecs,
         "supported_containers": supported_containers,
+        "audio_normalize": audio_normalize,
     });
     if let Some(id) = burn_subtitle_id {
         body["burn_subtitle_id"] = serde_json::json!(id);
     }
+    if let Some(id) = audio_stream_id {
+        body["audio_stream_id"] = serde_json::json!(id);
+    }
     post_json("/api/media/stream-token", &body, Some(token)).await
+}
+
+/// Cycle audio-track selection through the list. Returns the id of the next track.
+/// Cycles: current → next → first → ... (never None — there's always an audio track).
+pub fn cycle_audio_selection(current: Option<i64>, list: &[AudioTrack]) -> Option<i64> {
+    if list.is_empty() {
+        return None;
+    }
+    match current {
+        None => Some(list[0].id),
+        Some(cur) => {
+            let idx = list.iter().position(|t| t.id == cur);
+            match idx {
+                Some(i) => Some(list[(i + 1) % list.len()].id),
+                None => Some(list[0].id),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -43,23 +43,37 @@ const DEFAULT_CONTAINERS: &[&str] = &["mp4", "m4v", "webm", "mov"];
 
 /// Decide the transcode mode based on media streams, container, and client capabilities.
 ///
+/// `selected_audio` is the audio stream the client requested (or the default if omitted).
+/// When it's not the file's first audio stream, Direct is no longer possible because
+/// HTML5 `<video>` has no reliable audio-track-selection API — we must at least Remux
+/// so the HLS output carries only the selected track.
+///
 /// If `burn_requested` is true, returns `FullTranscode` unconditionally — burning
 /// a subtitle into the video stream requires a full re-encode.
+///
+/// If `normalize_requested` is true, the minimum mode becomes `AudioTranscode` —
+/// the loudnorm filter only runs during a real audio re-encode.
 pub fn decide_transcode_mode(
     streams: &[MediaStream],
     container_format: Option<&str>,
     client: &ClientCapabilities,
+    selected_audio: Option<&MediaStream>,
     burn_requested: bool,
+    normalize_requested: bool,
 ) -> TranscodeMode {
     if burn_requested {
         return TranscodeMode::FullTranscode;
     }
 
     let video = streams.iter().find(|s| s.stream_type == "video");
-    let audio = streams.iter().find(|s| s.stream_type == "audio");
+    let first_audio = streams.iter().find(|s| s.stream_type == "audio");
+    let audio = selected_audio.or(first_audio);
 
     // No video stream — probably audio file, serve directly
     let Some(video) = video else {
+        if normalize_requested {
+            return TranscodeMode::AudioTranscode;
+        }
         return TranscodeMode::Direct;
     };
 
@@ -101,14 +115,29 @@ pub fn decide_transcode_mode(
         })
         .unwrap_or(false);
 
-    if video_ok && audio_ok && container_ok {
+    // Non-default audio track forces at least Remux (see function docs).
+    let non_default_audio = match (selected_audio, first_audio) {
+        (Some(sel), Some(first)) => sel.id != first.id,
+        _ => false,
+    };
+
+    let base = if video_ok && audio_ok && container_ok && !non_default_audio {
         TranscodeMode::Direct
-    } else if video_ok && audio_ok && !container_ok {
+    } else if video_ok && audio_ok {
         TranscodeMode::Remux
     } else if video_ok && !audio_ok {
         TranscodeMode::AudioTranscode
     } else {
         TranscodeMode::FullTranscode
+    };
+
+    if normalize_requested {
+        match base {
+            TranscodeMode::Direct | TranscodeMode::Remux => TranscodeMode::AudioTranscode,
+            other => other,
+        }
+    } else {
+        base
     }
 }
 
@@ -160,6 +189,15 @@ pub struct TranscodeSession {
     /// Resolved burn paths (symlinked into output_dir). Cleaned up when the
     /// session's output_dir is removed.
     burn_resolved: RwLock<Option<BurnResolved>>,
+    /// Absolute ffprobe `stream_index` of the audio track to map into the output.
+    /// `None` means "first audio stream" — FFmpeg uses `0:a:0?` as a safe fallback.
+    pub audio_stream_index: Option<i32>,
+    /// If true, append `loudnorm` to the audio filter chain. Only effective
+    /// in AudioTranscode / FullTranscode modes.
+    pub audio_normalize: bool,
+    /// DB id of the selected audio stream, for admin observability and echoing
+    /// back to the client.
+    pub audio_stream_id: Option<i64>,
     ffmpeg_child: RwLock<Option<tokio::process::Child>>,
     pub last_accessed: RwLock<Instant>,
     /// Sends `true` when the first .ts segment is ready. Reset to `false` on seek.
@@ -199,6 +237,9 @@ pub struct ActiveSessionInfo {
     pub idle_seconds: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub burned_subtitle: Option<BurnedSubtitleDisplay>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_stream_id: Option<i64>,
+    pub audio_normalize: bool,
 }
 
 /// Admin-visible description of a subtitle being burned into a session's video.
@@ -277,9 +318,10 @@ impl TranscodeSessionManager {
         file_path: &str,
         mode: TranscodeMode,
         video_stream: Option<&MediaStream>,
-        _audio_stream: Option<&MediaStream>,
+        audio_stream: Option<&MediaStream>,
         start_time: f64,
         burn_subtitle: Option<BurnSubtitle>,
+        audio_normalize: bool,
     ) -> Result<Arc<TranscodeSession>, anyhow::Error> {
         // Check global concurrent limit
         {
@@ -295,6 +337,8 @@ impl TranscodeSessionManager {
         let session_id = uuid_v4();
         let output_dir = self.cache_dir.join(&session_id);
         let video_height = video_stream.and_then(|v| v.height);
+        let audio_stream_index = audio_stream.map(|s| s.stream_index);
+        let audio_stream_id = audio_stream.map(|s| s.id);
 
         tokio::fs::create_dir_all(&output_dir).await?;
 
@@ -314,6 +358,8 @@ impl TranscodeSessionManager {
             video_height,
             start_time,
             burn_resolved.as_ref(),
+            audio_stream_index,
+            audio_normalize,
         )
         .await?;
 
@@ -331,6 +377,9 @@ impl TranscodeSessionManager {
             actual_start_time: RwLock::new(start_time),
             burn_subtitle,
             burn_resolved: RwLock::new(burn_resolved),
+            audio_stream_index,
+            audio_normalize,
+            audio_stream_id,
             ffmpeg_child: RwLock::new(Some(child)),
             last_accessed: RwLock::new(Instant::now()),
             ready_tx,
@@ -397,6 +446,8 @@ impl TranscodeSessionManager {
             session.video_height,
             seek_time,
             burn_resolved.as_ref(),
+            session.audio_stream_index,
+            session.audio_normalize,
         )
         .await?;
 
@@ -424,6 +475,8 @@ impl TranscodeSessionManager {
         video_height: Option<i32>,
         start_time: f64,
         burn: Option<&BurnResolved>,
+        audio_stream_index: Option<i32>,
+        audio_normalize: bool,
     ) -> Result<tokio::process::Child, anyhow::Error> {
         tokio::fs::create_dir_all(output_dir).await?;
 
@@ -446,10 +499,24 @@ impl TranscodeSessionManager {
         cmd.arg("-i").arg(file_path);
         cmd.args(["-y", "-nostdin"]);
 
-        // Deterministic stream mapping: always take first video + first audio.
-        // Subtitles are delivered separately as WebVTT; we never include them
-        // in the HLS output, so no -map 0:s.
-        cmd.args(["-map", "0:v:0?", "-map", "0:a:0?"]);
+        // Stream mapping: first video always; audio is the user-selected absolute
+        // ffprobe index when provided, otherwise the file's first audio stream.
+        // Subtitles are delivered separately as WebVTT; we never include them in
+        // the HLS output, so no -map 0:s.
+        let audio_map = match audio_stream_index {
+            Some(idx) => format!("0:{}?", idx),
+            None => "0:a:0?".to_string(),
+        };
+        cmd.args(["-map", "0:v:0?", "-map", audio_map.as_str()]);
+
+        // Loudness normalization applies only when audio is being re-encoded.
+        // Chained in front of aresample so timestamp fixup runs on the
+        // post-normalized signal.
+        let audio_filter = if audio_normalize {
+            "loudnorm=I=-16:LRA=11:TP=-1.5,aresample=async=1:first_pts=0"
+        } else {
+            "aresample=async=1:first_pts=0"
+        };
 
         match mode {
             TranscodeMode::Remux => {
@@ -466,7 +533,7 @@ impl TranscodeSessionManager {
                     "-c:a", "aac",
                     "-b:a", "192k",
                     "-ac", "2",
-                    "-af", "aresample=async=1:first_pts=0",
+                    "-af", audio_filter,
                 ]);
             }
             TranscodeMode::FullTranscode => {
@@ -502,7 +569,7 @@ impl TranscodeSessionManager {
                     "-c:a", "aac",
                     "-b:a", "192k",
                     "-ac", "2",
-                    "-af", "aresample=async=1:first_pts=0",
+                    "-af", audio_filter,
                 ]);
             }
             TranscodeMode::Direct => unreachable!(),
@@ -667,6 +734,8 @@ impl TranscodeSessionManager {
                 start_time_seconds: start_time,
                 idle_seconds,
                 burned_subtitle,
+                audio_stream_id: session.audio_stream_id,
+                audio_normalize: session.audio_normalize,
             });
         }
         out
@@ -791,42 +860,74 @@ mod tests {
     #[test]
     fn direct_when_all_compatible() {
         let streams = vec![stream("video", "h264"), stream("audio", "aac")];
-        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, false, false);
         assert_eq!(mode, TranscodeMode::Direct);
     }
 
     #[test]
     fn burn_forces_full_transcode_even_when_compatible() {
         let streams = vec![stream("video", "h264"), stream("audio", "aac")];
-        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), true);
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, true, false);
         assert_eq!(mode, TranscodeMode::FullTranscode);
     }
 
     #[test]
     fn remux_when_container_mismatch() {
         let streams = vec![stream("video", "h264"), stream("audio", "aac")];
-        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), false);
+        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), None, false, false);
         assert_eq!(mode, TranscodeMode::Remux);
     }
 
     #[test]
     fn burn_overrides_remux_decision() {
         let streams = vec![stream("video", "h264"), stream("audio", "aac")];
-        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), true);
+        let mode = decide_transcode_mode(&streams, Some("mkv"), &caps(), None, true, false);
         assert_eq!(mode, TranscodeMode::FullTranscode);
     }
 
     #[test]
     fn audio_transcode_when_audio_incompatible() {
         let streams = vec![stream("video", "h264"), stream("audio", "ac3")];
-        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, false, false);
         assert_eq!(mode, TranscodeMode::AudioTranscode);
     }
 
     #[test]
     fn full_transcode_when_video_incompatible() {
         let streams = vec![stream("video", "hevc"), stream("audio", "aac")];
-        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), false);
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, false, false);
+        assert_eq!(mode, TranscodeMode::FullTranscode);
+    }
+
+    #[test]
+    fn non_default_audio_selection_forces_at_least_remux() {
+        let mut first = stream("audio", "aac");
+        first.id = 10;
+        let mut second = stream("audio", "aac");
+        second.id = 11;
+        let streams = vec![stream("video", "h264"), first, second.clone()];
+        let mode = decide_transcode_mode(
+            &streams,
+            Some("mp4"),
+            &caps(),
+            Some(&second),
+            false,
+            false,
+        );
+        assert_eq!(mode, TranscodeMode::Remux);
+    }
+
+    #[test]
+    fn normalize_promotes_direct_to_audio_transcode() {
+        let streams = vec![stream("video", "h264"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, false, true);
+        assert_eq!(mode, TranscodeMode::AudioTranscode);
+    }
+
+    #[test]
+    fn normalize_leaves_full_transcode_alone() {
+        let streams = vec![stream("video", "hevc"), stream("audio", "aac")];
+        let mode = decide_transcode_mode(&streams, Some("mp4"), &caps(), None, false, true);
         assert_eq!(mode, TranscodeMode::FullTranscode);
     }
 }

@@ -177,6 +177,42 @@ fn subtitle_label(t: &api::SubtitleTrack) -> String {
     }
 }
 
+/// Produce a user-facing label for an audio track.
+fn audio_label(t: &api::AudioTrack) -> String {
+    let base = t
+        .language
+        .clone()
+        .or_else(|| t.title.clone())
+        .unwrap_or_else(|| format!("Audio #{}", t.id));
+    let mut chips: Vec<String> = Vec::new();
+    if let Some(codec) = &t.codec {
+        chips.push(codec.to_uppercase());
+    }
+    if let Some(ch) = t.channels {
+        let pretty = match ch {
+            1 => "Mono".to_string(),
+            2 => "Stereo".to_string(),
+            6 => "5.1".to_string(),
+            8 => "7.1".to_string(),
+            n => format!("{}ch", n),
+        };
+        chips.push(pretty);
+    }
+    if let Some(title) = &t.title {
+        if t.language.as_ref().map(|l| l != title).unwrap_or(true) {
+            chips.push(title.clone());
+        }
+    }
+    if t.is_default {
+        chips.push("Default".to_string());
+    }
+    if chips.is_empty() {
+        base
+    } else {
+        format!("{} · {}", base, chips.join(" · "))
+    }
+}
+
 #[component]
 pub fn Player(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
@@ -207,6 +243,11 @@ pub fn Player(id: i64) -> Element {
     let mut subtitle_menu_open = use_signal(|| false);
     // PTS offset for HLS subtitle alignment; 0.0 for direct play.
     let mut subtitle_offset = use_signal(|| 0.0_f64);
+    // Audio state
+    let mut available_audio_tracks = use_signal(Vec::<api::AudioTrack>::new);
+    let mut selected_audio_stream_id = use_signal(|| None::<i64>);
+    let mut audio_normalize_on = use_signal(|| false);
+    let mut audio_menu_open = use_signal(|| false);
     let nav = use_navigator();
 
     // Install the subtitle JS bridge once per mount.
@@ -282,7 +323,18 @@ pub fn Player(id: i64) -> Element {
                     let ac = ac.clone();
                     let ct = ct.clone();
                     async move {
-                        api::get_stream_token(&token, id, vc, ac, ct, resume_time, None).await
+                        api::get_stream_token(
+                            &token,
+                            id,
+                            vc,
+                            ac,
+                            ct,
+                            resume_time,
+                            None,
+                            None,
+                            false,
+                        )
+                        .await
                     }
                 }
             })
@@ -319,6 +371,11 @@ pub fn Player(id: i64) -> Element {
                         .map(|s| s.id);
                     selected_subtitle_id.set(auto_select_id);
                     apply_selected_subtitle();
+
+                    // Seed audio state
+                    available_audio_tracks.set(resp.audio_tracks.clone());
+                    selected_audio_stream_id.set(resp.selected_audio_stream_id);
+                    audio_normalize_on.set(resp.audio_normalize);
 
                     // For HLS modes, set the time offset and attach hls.js
                     if mode != "direct" {
@@ -618,6 +675,8 @@ pub fn Player(id: i64) -> Element {
             }
 
             let (vc, ac, ct) = probe_client_capabilities();
+            let audio_id = selected_audio_stream_id();
+            let normalize = audio_normalize_on();
             let resp_result = with_refresh(auth, {
                 let vc = vc.clone();
                 let ac = ac.clone();
@@ -627,7 +686,18 @@ pub fn Player(id: i64) -> Element {
                     let ac = ac.clone();
                     let ct = ct.clone();
                     async move {
-                        api::get_stream_token(&token, id, vc, ac, ct, t, Some(burn_id)).await
+                        api::get_stream_token(
+                            &token,
+                            id,
+                            vc,
+                            ac,
+                            ct,
+                            t,
+                            Some(burn_id),
+                            audio_id,
+                            normalize,
+                        )
+                        .await
                     }
                 }
             })
@@ -642,6 +712,9 @@ pub fn Player(id: i64) -> Element {
                     stream_token.set(resp.token.clone());
                     burned_subtitle_id.set(resp.burned_subtitle_id);
                     available_subtitles.set(resp.subtitles.clone());
+                    available_audio_tracks.set(resp.audio_tracks.clone());
+                    selected_audio_stream_id.set(resp.selected_audio_stream_id);
+                    audio_normalize_on.set(resp.audio_normalize);
                     // A burn supersedes any selected VTT track.
                     selected_subtitle_id.set(None);
                     let offset = resp.transcode_actual_start_seconds.unwrap_or(t);
@@ -707,6 +780,8 @@ pub fn Player(id: i64) -> Element {
                 .await;
             }
             let (vc, ac, ct) = probe_client_capabilities();
+            let audio_id = selected_audio_stream_id();
+            let normalize = audio_normalize_on();
             let resp_result = with_refresh(auth, {
                 let vc = vc.clone();
                 let ac = ac.clone();
@@ -716,7 +791,10 @@ pub fn Player(id: i64) -> Element {
                     let ac = ac.clone();
                     let ct = ct.clone();
                     async move {
-                        api::get_stream_token(&token, id, vc, ac, ct, t, None).await
+                        api::get_stream_token(
+                            &token, id, vc, ac, ct, t, None, audio_id, normalize,
+                        )
+                        .await
                     }
                 }
             })
@@ -729,6 +807,9 @@ pub fn Player(id: i64) -> Element {
                 stream_token.set(resp.token.clone());
                 burned_subtitle_id.set(None);
                 available_subtitles.set(resp.subtitles.clone());
+                available_audio_tracks.set(resp.audio_tracks.clone());
+                selected_audio_stream_id.set(resp.selected_audio_stream_id);
+                audio_normalize_on.set(resp.audio_normalize);
                 let offset = resp.transcode_actual_start_seconds.unwrap_or(t);
                 subtitle_offset.set(offset);
                 hls_time_offset.set(t);
@@ -764,6 +845,120 @@ pub fn Player(id: i64) -> Element {
                 }
             }
         });
+    };
+
+    // Request a new stream with different audio track and/or normalization.
+    // Restart pattern mirrors `clear_burn`: destroy HLS, save progress, stop
+    // the old transcode, fetch a fresh token, spin up hls.js on the new URL.
+    // Burn state is preserved across the swap.
+    let mut request_audio_change = move |new_audio_id: Option<i64>, new_normalize: bool| {
+        audio_menu_open.set(false);
+        let t = current_time();
+        let prev_session = transcode_session_id();
+        let burn_id = burned_subtitle_id();
+        destroy_hls();
+        spawn(async move {
+            if t > 0.0 {
+                let _ = with_refresh(auth, |token| async move {
+                    api::update_progress(&token, id, t as i32).await
+                })
+                .await;
+            }
+            if let Some(sid) = prev_session {
+                let _ = with_refresh(auth, move |token| {
+                    let sid = sid.clone();
+                    async move { api::stop_transcode(&token, &sid).await }
+                })
+                .await;
+            }
+            let (vc, ac, ct) = probe_client_capabilities();
+            let resp_result = with_refresh(auth, {
+                let vc = vc.clone();
+                let ac = ac.clone();
+                let ct = ct.clone();
+                move |token| {
+                    let vc = vc.clone();
+                    let ac = ac.clone();
+                    let ct = ct.clone();
+                    async move {
+                        api::get_stream_token(
+                            &token,
+                            id,
+                            vc,
+                            ac,
+                            ct,
+                            t,
+                            burn_id,
+                            new_audio_id,
+                            new_normalize,
+                        )
+                        .await
+                    }
+                }
+            })
+            .await;
+            match resp_result {
+                Ok(resp) => {
+                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    stream_mode.set(resp.mode.clone());
+                    stream_url.set(Some(url.clone()));
+                    transcode_session_id.set(resp.transcode_session_id.clone());
+                    stream_token.set(resp.token.clone());
+                    available_subtitles.set(resp.subtitles.clone());
+                    burned_subtitle_id.set(resp.burned_subtitle_id);
+                    available_audio_tracks.set(resp.audio_tracks.clone());
+                    selected_audio_stream_id.set(resp.selected_audio_stream_id);
+                    audio_normalize_on.set(resp.audio_normalize);
+                    let offset = resp.transcode_actual_start_seconds.unwrap_or(t);
+                    subtitle_offset.set(offset);
+                    hls_time_offset.set(t);
+                    last_seek_time.set(t);
+                    apply_selected_subtitle();
+                    if resp.mode != "direct" {
+                        let hls_url = url.clone();
+                        let token = resp.token.clone();
+                        let js = format!(
+                            "setTimeout(function() {{ \
+                                var video = document.getElementById('orthanc-player'); \
+                                if (!video) return; \
+                                if (typeof Hls !== 'undefined' && Hls.isSupported()) {{ \
+                                    if (window._orthanc_hls) {{ window._orthanc_hls.destroy(); }} \
+                                    var hls = new Hls({{ \
+                                        startPosition: 0, \
+                                        xhrSetup: function(xhr, url) {{ \
+                                            if (url.indexOf('token=') === -1) {{ \
+                                                var sep = url.indexOf('?') === -1 ? '?' : '&'; \
+                                                url = url + sep + 'token={}'; \
+                                            }} \
+                                            xhr.open('GET', url, true); \
+                                        }} \
+                                    }}); \
+                                    hls.loadSource('{}'); \
+                                    hls.attachMedia(video); \
+                                    video.dataset.hlsUrl = '{}'; \
+                                    window._orthanc_hls = hls; \
+                                }} \
+                            }}, 100);",
+                            token, hls_url, hls_url
+                        );
+                        let _ = js_sys::eval(&js);
+                    }
+                }
+                Err(e) => {
+                    error_msg.set(Some(format!("Audio change failed: {}", e)));
+                }
+            }
+        });
+    };
+
+    // Cycle audio tracks with the same keyboard shortcut pattern as subtitles.
+    let mut cycle_audio = move || {
+        let list = available_audio_tracks();
+        if list.len() < 2 {
+            return;
+        }
+        let next = api::cycle_audio_selection(selected_audio_stream_id(), &list);
+        request_audio_change(next, audio_normalize_on());
     };
 
     let go_back = move |_| {
@@ -839,6 +1034,10 @@ pub fn Player(id: i64) -> Element {
                     } else if (e.key === 'c' || e.key === 'C') {
                         e.preventDefault();
                         var btn = document.querySelector('[data-action="subtitle-cycle"]');
+                        if (btn) btn.click();
+                    } else if (e.key === 'a' || e.key === 'A') {
+                        e.preventDefault();
+                        var btn = document.querySelector('[data-action="audio-cycle"]');
                         if (btn) btn.click();
                     }
                 };
@@ -1036,6 +1235,68 @@ pub fn Player(id: i64) -> Element {
 
                             // Right controls
                             div { class: "player-controls-right",
+                                // Audio menu (shown whenever an audio stream exists;
+                                // covers track picking + loudness normalization).
+                                if !available_audio_tracks().is_empty() {
+                                    div { class: "player-audio-wrap",
+                                        button {
+                                            class: if audio_normalize_on() { "player-icon-btn player-audio-btn active" } else { "player-icon-btn player-audio-btn" },
+                                            onclick: move |_| {
+                                                let v = !audio_menu_open();
+                                                audio_menu_open.set(v);
+                                            },
+                                            dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 0 0-9 9v5a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5.07A7 7 0 0 1 19 12v.07H17a1 1 0 0 0-1 1V19a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-5a9 9 0 0 0-9-9z"/></svg>"#,
+                                        }
+                                        if audio_menu_open() {
+                                            div { class: "player-audio-menu",
+                                                onclick: move |e| e.stop_propagation(),
+                                                div { class: "player-audio-menu-header", "Audio" }
+                                                for track in available_audio_tracks().iter() {
+                                                    {
+                                                        let label = audio_label(track);
+                                                        let tid = track.id;
+                                                        let is_selected = selected_audio_stream_id() == Some(tid);
+                                                        let normalize = audio_normalize_on();
+                                                        rsx! {
+                                                            button {
+                                                                key: "{tid}",
+                                                                class: if is_selected { "player-audio-item selected" } else { "player-audio-item" },
+                                                                onclick: move |_| {
+                                                                    if !is_selected {
+                                                                        request_audio_change(Some(tid), normalize);
+                                                                    } else {
+                                                                        audio_menu_open.set(false);
+                                                                    }
+                                                                },
+                                                                "{label}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "player-audio-divider", "Output" }
+                                                {
+                                                    let normalize_on = audio_normalize_on();
+                                                    let current_audio = selected_audio_stream_id();
+                                                    rsx! {
+                                                        button {
+                                                            class: if normalize_on { "player-audio-item player-audio-toggle selected" } else { "player-audio-item player-audio-toggle" },
+                                                            onclick: move |_| {
+                                                                request_audio_change(current_audio, !normalize_on);
+                                                            },
+                                                            if normalize_on { "Normalize loudness: On" } else { "Normalize loudness: Off" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Hidden cycle button — target of keyboard 'a'/'A'
+                                        button {
+                                            "data-action": "audio-cycle",
+                                            style: "display:none",
+                                            onclick: move |_| cycle_audio(),
+                                        }
+                                    }
+                                }
                                 // Subtitle menu (only if subtitles exist)
                                 if !available_subtitles().is_empty() {
                                     div { class: "player-subtitle-wrap",

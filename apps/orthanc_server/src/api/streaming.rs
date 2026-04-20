@@ -76,6 +76,14 @@ struct StreamTokenRequest {
     /// If set, force FullTranscode and burn this subtitle into the video.
     #[serde(default)]
     burn_subtitle_id: Option<i64>,
+    /// DB id of the audio stream the client wants to hear. When omitted, the
+    /// server picks the `is_default`-flagged audio, else the first audio stream.
+    #[serde(default)]
+    audio_stream_id: Option<i64>,
+    /// When true, apply EBU R128 loudness normalization. Forces at least an
+    /// AudioTranscode because normalization requires a re-encode.
+    #[serde(default)]
+    audio_normalize: bool,
 }
 
 #[derive(Serialize)]
@@ -89,6 +97,18 @@ struct SubtitleTrackOut {
     is_external: bool,
     /// "vtt" | "burn_required"
     delivery: &'static str,
+}
+
+#[derive(Serialize)]
+struct AudioTrackOut {
+    id: i64,
+    language: Option<String>,
+    title: Option<String>,
+    codec: Option<String>,
+    channels: Option<i32>,
+    sample_rate: Option<i32>,
+    bit_rate: Option<i32>,
+    is_default: bool,
 }
 
 #[derive(Serialize)]
@@ -109,6 +129,14 @@ struct StreamTokenResponse {
     /// once the segment is produced). Used as the subtitle offset.
     #[serde(skip_serializing_if = "Option::is_none")]
     transcode_actual_start_seconds: Option<f64>,
+    #[serde(default)]
+    audio_tracks: Vec<AudioTrackOut>,
+    /// Echoes the audio stream id actually chosen by the server (either from the
+    /// request or from default resolution). `None` when the item has no audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_audio_stream_id: Option<i64>,
+    /// Echoes whether loudness normalization is active.
+    audio_normalize: bool,
 }
 
 async fn create_stream_token(
@@ -163,11 +191,30 @@ async fn create_stream_token(
         burn_stream = Some(s);
     }
 
+    // Resolve audio selection: validate client-supplied id, or fall back to the
+    // `is_default`-flagged audio, else the first audio stream in the file.
+    let selected_audio: Option<MediaStream> = if let Some(audio_id) = body.audio_stream_id {
+        let s = streams
+            .iter()
+            .find(|s| s.id == audio_id && s.stream_type == "audio")
+            .cloned()
+            .ok_or_else(|| ApiError::BadRequest("audio_stream_id does not match an audio stream for this item".into()))?;
+        Some(s)
+    } else {
+        streams
+            .iter()
+            .find(|s| s.stream_type == "audio" && s.is_default)
+            .or_else(|| streams.iter().find(|s| s.stream_type == "audio"))
+            .cloned()
+    };
+
     let mode = transcoding::decide_transcode_mode(
         &streams,
         item.container_format.as_deref(),
         &client_caps,
+        selected_audio.as_ref(),
         burn_stream.is_some(),
+        body.audio_normalize,
     );
 
     // Generate token
@@ -192,7 +239,6 @@ async fn create_stream_token(
         } else {
             // Start transcode session
             let video_stream = streams.iter().find(|s| s.stream_type == "video");
-            let audio_stream = streams.iter().find(|s| s.stream_type == "audio");
 
             let burn = build_burn_option(&state, burn_stream.as_ref(), &file_path).await?;
 
@@ -204,9 +250,10 @@ async fn create_stream_token(
                     &file_path,
                     mode,
                     video_stream,
-                    audio_stream,
+                    selected_audio.as_ref(),
                     body.start_time,
                     burn,
+                    body.audio_normalize,
                 )
                 .await
                 .map_err(|e| {
@@ -253,7 +300,9 @@ async fn create_stream_token(
         .retain(|_, v| v.expires_at > now);
 
     let subtitles_out = build_subtitle_list(&streams);
+    let audio_tracks_out = build_audio_list(&streams);
     let burned_subtitle_id = burn_stream.as_ref().map(|s| s.id);
+    let selected_audio_stream_id = selected_audio.as_ref().map(|s| s.id);
 
     Ok(Json(StreamTokenResponse {
         token,
@@ -265,6 +314,9 @@ async fn create_stream_token(
         subtitles: subtitles_out,
         burned_subtitle_id,
         transcode_actual_start_seconds: actual_start_seconds,
+        audio_tracks: audio_tracks_out,
+        selected_audio_stream_id,
+        audio_normalize: body.audio_normalize,
     }))
 }
 
@@ -291,6 +343,23 @@ fn build_subtitle_list(streams: &[MediaStream]) -> Vec<SubtitleTrackOut> {
         });
     }
     out
+}
+
+fn build_audio_list(streams: &[MediaStream]) -> Vec<AudioTrackOut> {
+    streams
+        .iter()
+        .filter(|s| s.stream_type == "audio")
+        .map(|s| AudioTrackOut {
+            id: s.id,
+            language: s.language.clone(),
+            title: s.title.clone(),
+            codec: s.codec.clone(),
+            channels: s.channels,
+            sample_rate: s.sample_rate,
+            bit_rate: s.bit_rate,
+            is_default: s.is_default,
+        })
+        .collect()
 }
 
 /// Spawn a background task that pre-extracts WebVTT for every text-deliverable

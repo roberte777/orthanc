@@ -2051,6 +2051,72 @@ a {
   color: #facc15;
 }
 
+/* ── Audio menu ── */
+.player-audio-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.player-audio-btn.active {
+  color: #facc15;
+}
+.player-audio-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(18, 18, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 0.25rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+}
+.player-audio-menu-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+.player-audio-divider {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 0.65rem 0.75rem 0.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 0.25rem;
+}
+.player-audio-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #fff;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.player-audio-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.player-audio-item.selected {
+  background: rgba(250, 204, 21, 0.15);
+  color: #facc15;
+}
+.player-audio-toggle {
+  font-weight: 500;
+}
+
 /* ── Admin burn badge ── */
 .badge-burn {
   background: linear-gradient(90deg, #f97316 0%, #eab308 100%);
