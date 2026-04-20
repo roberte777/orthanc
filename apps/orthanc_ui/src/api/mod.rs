@@ -413,6 +413,8 @@ pub struct StreamTokenResponse {
     #[serde(default)]
     pub subtitles: Vec<SubtitleTrack>,
     #[serde(default)]
+    pub selected_subtitle_id: Option<i64>,
+    #[serde(default)]
     pub burned_subtitle_id: Option<i64>,
     #[serde(default)]
     pub transcode_actual_start_seconds: Option<f64>,
@@ -580,6 +582,33 @@ pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) 
 
 pub async fn get_progress(token: &str, media_id: i64) -> Result<PlaybackProgress, String> {
     get_json(&format!("/api/media/{}/progress", media_id), Some(token)).await
+}
+
+pub async fn save_track_preferences(
+    token: &str,
+    media_id: i64,
+    audio_language: Option<String>,
+    subtitle_language: Option<String>,
+    subtitles_enabled: bool,
+    audio_normalize: bool,
+) -> Result<(), String> {
+    let body = serde_json::json!({
+        "media_item_id": media_id,
+        "audio_language": audio_language,
+        "subtitle_language": subtitle_language,
+        "subtitles_enabled": subtitles_enabled,
+        "audio_normalize": audio_normalize,
+    });
+    let url = format!("{}/api/media/track-preferences", API_BASE);
+    let client = reqwest::Client::new();
+    let resp = client.put(&url).json(&body).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("Error {}: {}", status, text))
+    }
 }
 
 // HTTP helpers using reqwest

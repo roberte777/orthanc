@@ -4,7 +4,7 @@ use crate::{
         state::{AppState, StreamTokenData},
     },
     auth::middleware::AuthUser,
-    models::{media::MediaItem, media_stream::MediaStream},
+    models::{media::MediaItem, media_stream::MediaStream, track_preference},
     transcoding,
 };
 use axum::{
@@ -35,6 +35,7 @@ pub fn media_router() -> Router<Arc<AppState>> {
         )
         .route("/{id}/progress", get(get_progress))
         .route("/{id}/progress", put(update_progress))
+        .route("/track-preferences", put(save_track_preferences))
 }
 
 /// The streaming endpoint itself (mounted under /api/stream).
@@ -122,6 +123,10 @@ struct StreamTokenResponse {
     transcode_session_id: Option<String>,
     #[serde(default)]
     subtitles: Vec<SubtitleTrackOut>,
+    /// The subtitle track the client should attach as a VTT overlay (from saved
+    /// preference or server default). `None` means no subtitle overlay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_subtitle_id: Option<i64>,
     /// When a burn was requested, echoes the honored subtitle id.
     #[serde(skip_serializing_if = "Option::is_none")]
     burned_subtitle_id: Option<i64>,
@@ -180,6 +185,15 @@ async fn create_stream_token(
         containers: body.supported_containers,
     };
 
+    // Load saved track preference for this user's scope (show for episodes,
+    // movie otherwise). Used as a fallback when the request doesn't pin tracks.
+    let scope_id = track_preference::resolve_scope_media_item_id(&state.db, body.media_item_id)
+        .await
+        .map_err(ApiError::Internal)?;
+    let pref = track_preference::load_preference(&state.db, user_id, scope_id)
+        .await
+        .map_err(ApiError::Internal)?;
+
     // Resolve burn request (if any) before picking a mode — a burn forces FullTranscode.
     let mut burn_stream: Option<MediaStream> = None;
     if let Some(burn_id) = body.burn_subtitle_id {
@@ -191,8 +205,8 @@ async fn create_stream_token(
         burn_stream = Some(s);
     }
 
-    // Resolve audio selection: validate client-supplied id, or fall back to the
-    // `is_default`-flagged audio, else the first audio stream in the file.
+    // Resolve audio selection: explicit request wins, else saved language
+    // preference, else the `is_default` audio, else the first audio stream.
     let selected_audio: Option<MediaStream> = if let Some(audio_id) = body.audio_stream_id {
         let s = streams
             .iter()
@@ -201,12 +215,45 @@ async fn create_stream_token(
             .ok_or_else(|| ApiError::BadRequest("audio_stream_id does not match an audio stream for this item".into()))?;
         Some(s)
     } else {
-        streams
-            .iter()
-            .find(|s| s.stream_type == "audio" && s.is_default)
+        let pref_audio = pref
+            .as_ref()
+            .and_then(|p| p.audio_language.as_deref())
+            .and_then(|lang| {
+                streams
+                    .iter()
+                    .find(|s| s.stream_type == "audio" && s.language.as_deref() == Some(lang))
+            });
+        pref_audio
+            .or_else(|| streams.iter().find(|s| s.stream_type == "audio" && s.is_default))
             .or_else(|| streams.iter().find(|s| s.stream_type == "audio"))
             .cloned()
     };
+
+    // Resolve subtitle preference when no explicit burn is already requested.
+    // VTT-deliverable picks become `selected_subtitle_id`; burn-required picks
+    // force FullTranscode via `burn_stream` (same path as an explicit burn).
+    let mut selected_subtitle_id: Option<i64> = None;
+    if let (true, Some(p)) = (burn_stream.is_none(), pref.as_ref())
+        && p.subtitles_enabled
+        && let Some(lang) = p.subtitle_language.as_deref()
+        && let Some(s) = streams
+            .iter()
+            .find(|s| s.stream_type == "subtitle" && s.language.as_deref() == Some(lang))
+    {
+        match crate::subtitles::classify(s) {
+            crate::subtitles::DeliveryMethod::Vtt => {
+                selected_subtitle_id = Some(s.id);
+            }
+            crate::subtitles::DeliveryMethod::BurnRequired => {
+                burn_stream = Some(s.clone());
+            }
+            crate::subtitles::DeliveryMethod::Unsupported => {}
+        }
+    }
+
+    // Audio normalize: explicit request wins if true; otherwise fall back to pref.
+    let audio_normalize =
+        body.audio_normalize || pref.as_ref().map(|p| p.audio_normalize).unwrap_or(false);
 
     let mode = transcoding::decide_transcode_mode(
         &streams,
@@ -214,7 +261,7 @@ async fn create_stream_token(
         &client_caps,
         selected_audio.as_ref(),
         burn_stream.is_some(),
-        body.audio_normalize,
+        audio_normalize,
     );
 
     // Generate token
@@ -253,7 +300,7 @@ async fn create_stream_token(
                     selected_audio.as_ref(),
                     body.start_time,
                     burn,
-                    body.audio_normalize,
+                    audio_normalize,
                 )
                 .await
                 .map_err(|e| {
@@ -312,11 +359,12 @@ async fn create_stream_token(
         duration_seconds: item.duration_seconds,
         transcode_session_id,
         subtitles: subtitles_out,
+        selected_subtitle_id,
         burned_subtitle_id,
         transcode_actual_start_seconds: actual_start_seconds,
         audio_tracks: audio_tracks_out,
         selected_audio_stream_id,
-        audio_normalize: body.audio_normalize,
+        audio_normalize,
     }))
 }
 
@@ -360,6 +408,52 @@ fn build_audio_list(streams: &[MediaStream]) -> Vec<AudioTrackOut> {
             is_default: s.is_default,
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Track preferences
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SaveTrackPreferencesRequest {
+    media_item_id: i64,
+    #[serde(default)]
+    audio_language: Option<String>,
+    #[serde(default)]
+    subtitle_language: Option<String>,
+    #[serde(default)]
+    subtitles_enabled: bool,
+    #[serde(default)]
+    audio_normalize: bool,
+}
+
+async fn save_track_preferences(
+    AuthUser(claims): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SaveTrackPreferencesRequest>,
+) -> ApiResult<StatusCode> {
+    let user_id: i64 = claims
+        .sub
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid user id".into()))?;
+
+    let scope_id = track_preference::resolve_scope_media_item_id(&state.db, body.media_item_id)
+        .await
+        .map_err(ApiError::Internal)?;
+
+    track_preference::upsert_preference(
+        &state.db,
+        user_id,
+        scope_id,
+        body.audio_language.as_deref(),
+        body.subtitle_language.as_deref(),
+        body.subtitles_enabled,
+        body.audio_normalize,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Spawn a background task that pre-extracts WebVTT for every text-deliverable

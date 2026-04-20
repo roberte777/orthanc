@@ -275,6 +275,42 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
+    // Fire-and-forget: persist the user's current audio/subtitle choice for
+    // this show (or movie). Scope resolution happens on the server.
+    let save_preferences = move || {
+        let audio_lang = selected_audio_stream_id()
+            .and_then(|sid| available_audio_tracks().iter().find(|t| t.id == sid).cloned())
+            .and_then(|t| t.language);
+        let sub_id = selected_subtitle_id().or(burned_subtitle_id());
+        let subs_enabled = sub_id.is_some();
+        let sub_lang = sub_id
+            .and_then(|sid| available_subtitles().iter().find(|t| t.id == sid).cloned())
+            .and_then(|t| t.language);
+        let normalize = audio_normalize_on();
+        spawn(async move {
+            let _ = with_refresh(auth, {
+                let audio_lang = audio_lang.clone();
+                let sub_lang = sub_lang.clone();
+                move |token| {
+                    let audio_lang = audio_lang.clone();
+                    let sub_lang = sub_lang.clone();
+                    async move {
+                        api::save_track_preferences(
+                            &token,
+                            id,
+                            audio_lang,
+                            sub_lang,
+                            subs_enabled,
+                            normalize,
+                        )
+                        .await
+                    }
+                }
+            })
+            .await;
+        });
+    };
+
     // Cleanup transcode session on unmount (e.g. browser navigation, route change)
     use_drop(move || {
         let session = transcode_session_id();
@@ -363,12 +399,18 @@ pub fn Player(id: i64) -> Element {
                         .unwrap_or(if mode == "direct" { 0.0 } else { resume_time });
                     subtitle_offset.set(offset);
 
-                    // Auto-select the default text subtitle if one is flagged.
-                    let auto_select_id = resp
-                        .subtitles
-                        .iter()
-                        .find(|s| s.is_default && s.delivery == "vtt")
-                        .map(|s| s.id);
+                    // Pick the VTT subtitle the server resolved (from saved preference)
+                    // or, if none and no burn is active, fall back to the default text track.
+                    let auto_select_id = resp.selected_subtitle_id.or_else(|| {
+                        if resp.burned_subtitle_id.is_some() {
+                            None
+                        } else {
+                            resp.subtitles
+                                .iter()
+                                .find(|s| s.is_default && s.delivery == "vtt")
+                                .map(|s| s.id)
+                        }
+                    });
                     selected_subtitle_id.set(auto_select_id);
                     apply_selected_subtitle();
 
@@ -642,6 +684,7 @@ pub fn Player(id: i64) -> Element {
         selected_subtitle_id.set(id);
         apply_selected_subtitle();
         subtitle_menu_open.set(false);
+        save_preferences();
     };
 
     // Cycle to the next deliverable subtitle (skips burn-required).
@@ -751,6 +794,7 @@ pub fn Player(id: i64) -> Element {
                         token, hls_url, hls_url
                     );
                     let _ = js_sys::eval(&js);
+                    save_preferences();
                 }
                 Err(e) => {
                     error_msg.set(Some(format!("Burn-in restart failed: {}", e)));
@@ -843,6 +887,7 @@ pub fn Player(id: i64) -> Element {
                     );
                     let _ = js_sys::eval(&js);
                 }
+                save_preferences();
             }
         });
     };
@@ -943,6 +988,7 @@ pub fn Player(id: i64) -> Element {
                         );
                         let _ = js_sys::eval(&js);
                     }
+                    save_preferences();
                 }
                 Err(e) => {
                     error_msg.set(Some(format!("Audio change failed: {}", e)));
