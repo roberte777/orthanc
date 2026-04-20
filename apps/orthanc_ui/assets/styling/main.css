@@ -43,7 +43,7 @@ a {
 /* ── Navbar (Netflix-style) ── */
 .navbar {
   background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 60%, transparent 100%);
-  padding: 0 4%;
+  padding: 0 3rem;
   height: var(--navbar-height);
   display: flex;
   align-items: center;
@@ -150,10 +150,11 @@ a {
 .content {
   flex: 1;
   width: 100%;
+  padding-top: var(--navbar-height);
 }
 
 .content-padded {
-  padding: calc(var(--navbar-height) + 2rem) 4% 2rem;
+  padding: 2rem 3rem;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -340,7 +341,7 @@ a {
 
 /* ── Pages ── */
 .page {
-  padding: calc(var(--navbar-height) + 2rem) 4% 2rem;
+  padding: 2rem 3rem;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -373,11 +374,7 @@ a {
 
 .hero-banner {
   position: relative;
-  height: 80vh;
-  min-height: 500px;
-  display: flex;
-  align-items: flex-end;
-  padding: 0 4% 8%;
+  padding: 2rem 3rem;
   background: linear-gradient(
     to right,
     rgba(20, 20, 20, 0.95) 0%,
@@ -478,8 +475,7 @@ a {
 
 /* ── Netflix Home: Content Rows ── */
 .content-rows {
-  padding: 0 4%;
-  margin-top: -6rem;
+  padding: 0 3rem;
   position: relative;
   z-index: 5;
 }
@@ -1182,7 +1178,7 @@ a {
 
 /* ── Browse Page (grid) ── */
 .browse-page {
-  padding-top: calc(var(--navbar-height) + 2rem) !important;
+  padding-top: 2rem !important;
 }
 
 .media-grid {
@@ -1308,7 +1304,7 @@ a {
   z-index: 2;
   display: flex;
   gap: 2.5rem;
-  padding: calc(var(--navbar-height) + 5rem) 4% 2rem;
+  padding: 5rem 3rem 2rem;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -1409,7 +1405,7 @@ a {
 .show-seasons {
   position: relative;
   z-index: 1;
-  padding: 0 4% 3rem;
+  padding: 0 2rem 3rem;
   max-width: 1200px;
   margin: 0 auto;
 }
