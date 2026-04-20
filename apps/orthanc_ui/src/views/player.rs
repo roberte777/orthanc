@@ -225,6 +225,16 @@ pub fn Player(id: i64) -> Element {
     let mut duration = use_signal(|| 0.0_f64);
     let mut show_controls = use_signal(|| true);
     let mut last_activity = use_signal(|| js_sys::Date::now());
+    // True on the pointerdown that revealed hidden controls, so the follow-up
+    // click does not also toggle playback. Cleared inside on_container_click.
+    let mut just_revealed_controls = use_signal(|| false);
+    // Matches `(pointer: coarse)` — true on touch-primary devices.
+    let is_touch_device = use_memo(|| {
+        js_sys::eval("window.matchMedia('(pointer: coarse)').matches")
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    });
     let initial_volume = state::storage_get(LS_DEFAULT_VOLUME)
         .and_then(|v| v.parse::<f64>().ok())
         .map(|v| v.clamp(0.0, 1.0))
@@ -679,6 +689,26 @@ pub fn Player(id: i64) -> Element {
         }
     };
 
+    // Touch/pen pointerdown on the container: always refresh activity, and
+    // when controls are hidden, reveal them without also toggling playback.
+    let on_pointer_down = move |e: Event<PointerData>| {
+        last_activity.set(js_sys::Date::now());
+        if e.pointer_type() != "mouse" && !show_controls() {
+            show_controls.set(true);
+            just_revealed_controls.set(true);
+        }
+    };
+
+    // Container click: if the preceding pointerdown revealed the controls,
+    // swallow this click so the video does not pause/play.
+    let on_container_click = move |e: MouseEvent| {
+        if just_revealed_controls() {
+            just_revealed_controls.set(false);
+            return;
+        }
+        toggle_play(e);
+    };
+
     // Auto-hide the overlay (and cursor) after a few seconds of inactivity,
     // unless the video is paused or a menu is open. The polling loop is owned
     // by this scope, so Dioxus cancels it when the player unmounts.
@@ -698,7 +728,8 @@ pub fn Player(id: i64) -> Element {
                     continue;
                 }
 
-                if show_controls() && js_sys::Date::now() - last_activity() > 3000.0 {
+                let threshold = if is_touch_device() { 4000.0 } else { 3000.0 };
+                if show_controls() && js_sys::Date::now() - last_activity() > threshold {
                     show_controls.set(false);
                 }
             }
@@ -1149,7 +1180,8 @@ pub fn Player(id: i64) -> Element {
             id: "player-container",
             class: if show_controls() { "player-container" } else { "player-container idle" },
             onmousemove: on_mouse_move,
-            onclick: toggle_play,
+            onpointerdown: on_pointer_down,
+            onclick: on_container_click,
 
             if let Some(ref err) = error_msg() {
                 div { class: "player-error",
@@ -1224,12 +1256,36 @@ pub fn Player(id: i64) -> Element {
                     class: if show_controls() { "player-controls" } else { "player-controls hidden" },
                     onclick: move |e| e.stop_propagation(),
 
-                    // Top bar - just back arrow
+                    // Top bar - back arrow + mobile-only title
                     div { class: "player-top-bar",
                         button {
                             class: "player-icon-btn player-back-btn",
                             onclick: go_back,
                             dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>"#,
+                        }
+                        span { class: "player-title-top", "{title}" }
+                    }
+
+                    // Mobile-only center cluster: skip-back / play / skip-forward
+                    div { class: "player-center-controls",
+                        button {
+                            class: "player-icon-btn player-skip-btn",
+                            onclick: skip_back,
+                            dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M11.99,5V1l-5,5l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6s-6-2.69-6-6h-2c0,4.42,3.58,8,8,8s8-3.58,8-8S16.41,5,11.99,5z"/><path d="M10.89,16h-0.85v-3.26l-1.01,0.31v-0.69l1.77-0.63h0.09V16z"/><path d="M15.17,14.24c0,0.32-0.03,0.6-0.1,0.82s-0.17,0.42-0.29,0.57s-0.28,0.26-0.45,0.33s-0.37,0.1-0.59,0.1s-0.41-0.03-0.59-0.1s-0.33-0.18-0.46-0.33s-0.23-0.34-0.3-0.57s-0.11-0.5-0.11-0.82V13.5c0-0.32,0.03-0.6,0.1-0.82s0.17-0.42,0.29-0.57s0.28-0.26,0.45-0.33s0.37-0.1,0.59-0.1s0.41,0.03,0.59,0.1c0.18,0.07,0.33,0.18,0.46,0.33s0.23,0.34,0.3,0.57s0.11,0.5,0.11,0.82V14.24z M14.32,13.38c0-0.19-0.01-0.35-0.04-0.48s-0.07-0.23-0.12-0.31s-0.11-0.14-0.19-0.17s-0.16-0.05-0.25-0.05s-0.18,0.02-0.25,0.05s-0.14,0.09-0.19,0.17s-0.09,0.18-0.12,0.31s-0.04,0.29-0.04,0.48v0.97c0,0.19,0.01,0.35,0.04,0.48s0.07,0.24,0.12,0.32s0.11,0.14,0.19,0.17s0.16,0.05,0.25,0.05s0.18-0.02,0.25-0.05s0.14-0.09,0.19-0.17s0.09-0.19,0.11-0.32s0.04-0.29,0.04-0.48V13.38z"/></svg>"#,
+                        }
+                        button {
+                            class: "player-icon-btn player-play-lg",
+                            onclick: toggle_play,
+                            dangerous_inner_html: if is_playing() {
+                                r#"<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>"#
+                            } else {
+                                r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>"#
+                            },
+                        }
+                        button {
+                            class: "player-icon-btn player-skip-btn",
+                            onclick: skip_forward,
+                            dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M18,13c0,3.31-2.69,6-6,6s-6-2.69-6-6s2.69-6,6-6v4l5-5l-5-5v4c-4.42,0-8,3.58-8,8c0,4.42,3.58,8,8,8s8-3.58,8-8H18z"/><polygon points="10.86,15.94 10.86,11.67 10.77,11.67 9,12.3 9,12.99 10.01,12.68 10.01,15.94"/><path d="M12.25,13.44v0.74c0,1.9,1.31,1.82,1.44,1.82c0.14,0,1.44,0.09,1.44-1.82v-0.74c0-1.9-1.31-1.82-1.44-1.82C13.55,11.62,12.25,11.53,12.25,13.44z M14.29,13.32v0.97c0,0.77-0.21,1.03-0.59,1.03c-0.38,0-0.6-0.26-0.6-1.03v-0.97c0-0.75,0.22-1.01,0.59-1.01C14.07,12.3,14.29,12.57,14.29,13.32z"/></svg>"#,
                         }
                     }
 
@@ -1267,29 +1323,33 @@ pub fn Player(id: i64) -> Element {
                         div { class: "player-bottom-bar",
                             // Left controls
                             div { class: "player-controls-left",
-                                // Play/Pause
-                                button {
-                                    class: "player-icon-btn",
-                                    onclick: toggle_play,
-                                    dangerous_inner_html: if is_playing() {
-                                        r#"<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>"#
-                                    } else {
-                                        r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>"#
-                                    },
-                                }
-                                // Skip back 10s (Material Design replay_10)
-                                button {
-                                    "data-action": "skip-back",
-                                    class: "player-icon-btn player-skip-btn",
-                                    onclick: skip_back,
-                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M11.99,5V1l-5,5l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6s-6-2.69-6-6h-2c0,4.42,3.58,8,8,8s8-3.58,8-8S16.41,5,11.99,5z"/><path d="M10.89,16h-0.85v-3.26l-1.01,0.31v-0.69l1.77-0.63h0.09V16z"/><path d="M15.17,14.24c0,0.32-0.03,0.6-0.1,0.82s-0.17,0.42-0.29,0.57s-0.28,0.26-0.45,0.33s-0.37,0.1-0.59,0.1s-0.41-0.03-0.59-0.1s-0.33-0.18-0.46-0.33s-0.23-0.34-0.3-0.57s-0.11-0.5-0.11-0.82V13.5c0-0.32,0.03-0.6,0.1-0.82s0.17-0.42,0.29-0.57s0.28-0.26,0.45-0.33s0.37-0.1,0.59-0.1s0.41,0.03,0.59,0.1c0.18,0.07,0.33,0.18,0.46,0.33s0.23,0.34,0.3,0.57s0.11,0.5,0.11,0.82V14.24z M14.32,13.38c0-0.19-0.01-0.35-0.04-0.48s-0.07-0.23-0.12-0.31s-0.11-0.14-0.19-0.17s-0.16-0.05-0.25-0.05s-0.18,0.02-0.25,0.05s-0.14,0.09-0.19,0.17s-0.09,0.18-0.12,0.31s-0.04,0.29-0.04,0.48v0.97c0,0.19,0.01,0.35,0.04,0.48s0.07,0.24,0.12,0.32s0.11,0.14,0.19,0.17s0.16,0.05,0.25,0.05s0.18-0.02,0.25-0.05s0.14-0.09,0.19-0.17s0.09-0.19,0.11-0.32s0.04-0.29,0.04-0.48V13.38z"/></svg>"#,
-                                }
-                                // Skip forward 10s (Material Design forward_10)
-                                button {
-                                    "data-action": "skip-forward",
-                                    class: "player-icon-btn player-skip-btn",
-                                    onclick: skip_forward,
-                                    dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M18,13c0,3.31-2.69,6-6,6s-6-2.69-6-6s2.69-6,6-6v4l5-5l-5-5v4c-4.42,0-8,3.58-8,8c0,4.42,3.58,8,8,8s8-3.58,8-8H18z"/><polygon points="10.86,15.94 10.86,11.67 10.77,11.67 9,12.3 9,12.99 10.01,12.68 10.01,15.94"/><path d="M12.25,13.44v0.74c0,1.9,1.31,1.82,1.44,1.82c0.14,0,1.44,0.09,1.44-1.82v-0.74c0-1.9-1.31-1.82-1.44-1.82C13.55,11.62,12.25,11.53,12.25,13.44z M14.29,13.32v0.97c0,0.77-0.21,1.03-0.59,1.03c-0.38,0-0.6-0.26-0.6-1.03v-0.97c0-0.75,0.22-1.01,0.59-1.01C14.07,12.3,14.29,12.57,14.29,13.32z"/></svg>"#,
+                                // Inline transport: play + skip buttons. Hidden on mobile
+                                // because the same controls appear in the center cluster.
+                                div { class: "player-inline-transport",
+                                    // Play/Pause
+                                    button {
+                                        class: "player-icon-btn",
+                                        onclick: toggle_play,
+                                        dangerous_inner_html: if is_playing() {
+                                            r#"<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>"#
+                                        } else {
+                                            r#"<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>"#
+                                        },
+                                    }
+                                    // Skip back 10s (Material Design replay_10)
+                                    button {
+                                        "data-action": "skip-back",
+                                        class: "player-icon-btn player-skip-btn",
+                                        onclick: skip_back,
+                                        dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M11.99,5V1l-5,5l5,5V7c3.31,0,6,2.69,6,6s-2.69,6-6,6s-6-2.69-6-6h-2c0,4.42,3.58,8,8,8s8-3.58,8-8S16.41,5,11.99,5z"/><path d="M10.89,16h-0.85v-3.26l-1.01,0.31v-0.69l1.77-0.63h0.09V16z"/><path d="M15.17,14.24c0,0.32-0.03,0.6-0.1,0.82s-0.17,0.42-0.29,0.57s-0.28,0.26-0.45,0.33s-0.37,0.1-0.59,0.1s-0.41-0.03-0.59-0.1s-0.33-0.18-0.46-0.33s-0.23-0.34-0.3-0.57s-0.11-0.5-0.11-0.82V13.5c0-0.32,0.03-0.6,0.1-0.82s0.17-0.42,0.29-0.57s0.28-0.26,0.45-0.33s0.37-0.1,0.59-0.1s0.41,0.03,0.59,0.1c0.18,0.07,0.33,0.18,0.46,0.33s0.23,0.34,0.3,0.57s0.11,0.5,0.11,0.82V14.24z M14.32,13.38c0-0.19-0.01-0.35-0.04-0.48s-0.07-0.23-0.12-0.31s-0.11-0.14-0.19-0.17s-0.16-0.05-0.25-0.05s-0.18,0.02-0.25,0.05s-0.14,0.09-0.19,0.17s-0.09,0.18-0.12,0.31s-0.04,0.29-0.04,0.48v0.97c0,0.19,0.01,0.35,0.04,0.48s0.07,0.24,0.12,0.32s0.11,0.14,0.19,0.17s0.16,0.05,0.25,0.05s0.18-0.02,0.25-0.05s0.14-0.09,0.19-0.17s0.09-0.19,0.11-0.32s0.04-0.29,0.04-0.48V13.38z"/></svg>"#,
+                                    }
+                                    // Skip forward 10s (Material Design forward_10)
+                                    button {
+                                        "data-action": "skip-forward",
+                                        class: "player-icon-btn player-skip-btn",
+                                        onclick: skip_forward,
+                                        dangerous_inner_html: r#"<svg viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none"><path d="M18,13c0,3.31-2.69,6-6,6s-6-2.69-6-6s2.69-6,6-6v4l5-5l-5-5v4c-4.42,0-8,3.58-8,8c0,4.42,3.58,8,8,8s8-3.58,8-8H18z"/><polygon points="10.86,15.94 10.86,11.67 10.77,11.67 9,12.3 9,12.99 10.01,12.68 10.01,15.94"/><path d="M12.25,13.44v0.74c0,1.9,1.31,1.82,1.44,1.82c0.14,0,1.44,0.09,1.44-1.82v-0.74c0-1.9-1.31-1.82-1.44-1.82C13.55,11.62,12.25,11.53,12.25,13.44z M14.29,13.32v0.97c0,0.77-0.21,1.03-0.59,1.03c-0.38,0-0.6-0.26-0.6-1.03v-0.97c0-0.75,0.22-1.01,0.59-1.01C14.07,12.3,14.29,12.57,14.29,13.32z"/></svg>"#,
+                                    }
                                 }
                                 // Volume
                                 div { class: "player-volume-group",
