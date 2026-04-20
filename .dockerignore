@@ -1,0 +1,13 @@
+**/target
+**/dist
+.git
+.github
+*.db
+*.db-wal
+*.db-shm
+flake.nix
+flake.lock
+result
+README.md
+PROJECT_PLAN.md
+CLAUDE.md
