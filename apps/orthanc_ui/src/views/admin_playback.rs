@@ -123,7 +123,7 @@ pub fn AdminPlayback() -> Element {
                                     let position = format!("{:.0}s", row.start_time_seconds);
                                     let idle = format!("{}s", row.idle_seconds);
                                     let short_sid: String = sid.chars().take(8).collect();
-                                    let reload = load.clone();
+                                    let reload = load;
                                     let burn = row.burned_subtitle.clone();
                                     rsx! {
                                         tr { key: "{sid_key}",
@@ -155,7 +155,7 @@ pub fn AdminPlayback() -> Element {
                                                     class: "btn btn-sm btn-danger",
                                                     onclick: move |_| {
                                                         let sid = sid.clone();
-                                                        let reload = reload.clone();
+                                                        let reload = reload;
                                                         spawn(async move {
                                                             let _ = with_refresh(auth, |token| {
                                                                 let sid = sid.clone();

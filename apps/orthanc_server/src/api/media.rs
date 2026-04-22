@@ -94,11 +94,9 @@ async fn recent_media(
     let mut shows: Vec<MediaItemResponse> = shows_raw.into_iter().map(Into::into).collect();
 
     enrich_list(&state.db, &mut movies)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
     enrich_list(&state.db, &mut shows)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(RecentMedia { movies, shows }))
 }
@@ -116,8 +114,7 @@ async fn list_movies(
 
     let mut items: Vec<MediaItemResponse> = raw.into_iter().map(Into::into).collect();
     enrich_list(&state.db, &mut items)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(items))
 }
@@ -135,8 +132,7 @@ async fn list_shows(
 
     let mut items: Vec<MediaItemResponse> = raw.into_iter().map(Into::into).collect();
     enrich_list(&state.db, &mut items)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(items))
 }
@@ -157,8 +153,7 @@ async fn get_movie(
 
     let mut resp: MediaItemResponse = movie.into();
     enrich(&state.db, &mut resp)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(resp))
 }
@@ -179,8 +174,7 @@ async fn get_show(
 
     let mut resp: MediaItemResponse = show.into();
     enrich(&state.db, &mut resp)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     // Load seasons with episodes
     let seasons = sqlx::query_as::<_, MediaItem>(
@@ -195,8 +189,7 @@ async fn get_show(
     for season in seasons {
         let mut season_resp: MediaItemResponse = season.clone().into();
         enrich(&state.db, &mut season_resp)
-            .await
-            .map_err(anyhow::Error::from)?;
+            .await?;
 
         let episodes = sqlx::query_as::<_, MediaItem>(
             "SELECT * FROM media_items WHERE parent_id = ? AND media_type = 'episode' ORDER BY episode_number",
@@ -208,8 +201,7 @@ async fn get_show(
 
         let mut ep_resps: Vec<MediaItemResponse> = episodes.into_iter().map(Into::into).collect();
         enrich_list(&state.db, &mut ep_resps)
-            .await
-            .map_err(anyhow::Error::from)?;
+            .await?;
         season_resp.children = Some(ep_resps);
         season_resps.push(season_resp);
     }

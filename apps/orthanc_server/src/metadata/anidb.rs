@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tracing::debug;
 
 const TITLES_URL: &str = "https://anidb.net/api/animetitles.xml.gz";
 const API_URL: &str = "http://api.anidb.net:9001/httpapi";

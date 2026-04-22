@@ -148,7 +148,7 @@ pub fn MovieDetail(id: i64) -> Element {
         });
     };
 
-    let mut initial_load = load_movie.clone();
+    let initial_load = load_movie;
     use_effect(move || {
         initial_load();
     });
@@ -249,13 +249,13 @@ pub fn MovieDetail(id: i64) -> Element {
                     if is_admin {
                         div { class: "detail-admin-actions",
                             {
-                                let mut reload = load_movie.clone();
+                                let reload = load_movie;
                                 rsx! {
                                     button {
                                         class: "btn-admin-refresh",
                                         onclick: move |_| {
                                             let token = auth.read().access_token.clone().unwrap_or_default();
-                                            let mut reload2 = reload.clone();
+                                            let reload2 = reload;
                                             refresh_msg.set(Some("Refreshing...".to_string()));
                                             spawn(async move {
                                                 match api::refresh_metadata(&token, id, "standard").await {
@@ -273,7 +273,7 @@ pub fn MovieDetail(id: i64) -> Element {
                                         class: "btn-admin-refresh",
                                         onclick: move |_| {
                                             let token = auth.read().access_token.clone().unwrap_or_default();
-                                            let mut reload2 = reload.clone();
+                                            let reload2 = reload;
                                             refresh_msg.set(Some("Full refresh...".to_string()));
                                             spawn(async move {
                                                 match api::refresh_metadata(&token, id, "full").await {

@@ -63,7 +63,7 @@ async fn refresh_item(
         req.mode.into(),
     )
     .await
-    .map_err(|e| ApiError::Internal(e))?;
+    .map_err(ApiError::Internal)?;
 
     Ok(Json(serde_json::json!({"message": "Metadata refreshed"})))
 }
@@ -87,7 +87,7 @@ async fn refresh_library(
         req.mode.into(),
     )
     .await
-    .map_err(|e| ApiError::Internal(e))?;
+    .map_err(ApiError::Internal)?;
 
     Ok(Json(result))
 }

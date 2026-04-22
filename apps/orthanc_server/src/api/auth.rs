@@ -76,7 +76,7 @@ async fn setup(
         return Err(ApiError::Conflict("Setup already complete".to_string()));
     }
 
-    let password_hash = hash_password(&req.password).map_err(anyhow::Error::from)?;
+    let password_hash = hash_password(&req.password)?;
 
     let user = sqlx::query_as::<_, crate::models::user::User>(
         "INSERT INTO users (username, email, password_hash, display_name, is_admin)
@@ -113,7 +113,7 @@ async fn login(
     .map_err(anyhow::Error::from)?
     .ok_or(ApiError::Unauthorized)?;
 
-    if !verify_password(&req.password, &user.password_hash).map_err(anyhow::Error::from)? {
+    if !verify_password(&req.password, &user.password_hash)? {
         return Err(ApiError::Unauthorized);
     }
 
@@ -260,8 +260,7 @@ async fn create_tokens(
         user.is_admin,
         &state.jwt_secret,
         state.access_token_expiry,
-    )
-    .map_err(anyhow::Error::from)?;
+    )?;
 
     let refresh_token = generate_refresh_token();
     let token_hash = hash_token(&refresh_token);

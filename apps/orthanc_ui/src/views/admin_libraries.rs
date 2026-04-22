@@ -36,13 +36,13 @@ pub fn AdminLibraries() -> Element {
         });
     };
 
-    let mut load_for_effect = load_libraries.clone();
-    let load_for_create = load_libraries.clone();
-    let load_for_edit = load_libraries.clone();
-    let load_for_delete = load_libraries.clone();
-    let load_for_path = load_libraries.clone();
+    let load_for_effect = load_libraries;
+    let load_for_create = load_libraries;
+    let load_for_edit = load_libraries;
+    let load_for_delete = load_libraries;
+    let load_for_path = load_libraries;
 
-    use_effect(move || load_for_effect());
+    use_effect(load_for_effect);
 
     rsx! {
         div { class: "page",
@@ -77,7 +77,7 @@ pub fn AdminLibraries() -> Element {
                             let lib_enabled = lib.is_enabled;
                             let paths = lib.paths.clone();
                             let tok = auth.read().access_token.clone().unwrap_or_default();
-                            let mut reload_path = load_for_path.clone();
+                            let mut reload_path = load_for_path;
 
                             rsx! {
                                 div { class: "library-card", key: "{lib_id}",
@@ -120,7 +120,7 @@ pub fn AdminLibraries() -> Element {
                                                     let path_id = path.id;
                                                     let path_str = path.path.clone();
                                                     let tok2 = tok.clone();
-                                                    let reload2 = load_for_path.clone();
+                                                    let reload2 = load_for_path;
                                                     rsx! {
                                                         div { class: "library-path-row", key: "{path_id}",
                                                             span { class: "library-path-text", "{path_str}" }
@@ -128,7 +128,7 @@ pub fn AdminLibraries() -> Element {
                                                                 class: "btn btn-sm btn-danger",
                                                                 onclick: move |_| {
                                                                     let tok = tok2.clone();
-                                                                    let mut reload = reload2.clone();
+                                                                    let mut reload = reload2;
                                                                     spawn(async move {
                                                                         let _ = api::remove_library_path(&tok, lib_id, path_id).await;
                                                                         reload();
@@ -159,7 +159,7 @@ pub fn AdminLibraries() -> Element {
                     token: auth.read().access_token.clone().unwrap_or_default(),
                     on_close: move |_| show_create.set(false),
                     on_created: {
-                        let mut reload = load_for_create.clone();
+                        let mut reload = load_for_create;
                         move |_| {
                             show_create.set(false);
                             reload();
@@ -176,7 +176,7 @@ pub fn AdminLibraries() -> Element {
                         library: lib,
                         on_close: move |_| editing_id.set(None),
                         on_saved: {
-                            let mut reload = load_for_edit.clone();
+                            let mut reload = load_for_edit;
                             move |_| {
                                 editing_id.set(None);
                                 reload();
@@ -203,7 +203,7 @@ pub fn AdminLibraries() -> Element {
                                 onclick: move |_| {
                                     let tok = auth.read().access_token.clone().unwrap_or_default();
                                     delete_confirm.set(None);
-                                    let mut reload = load_for_delete.clone();
+                                    let mut reload = load_for_delete;
                                     spawn(async move {
                                         let _ = api::delete_library(&tok, del_id).await;
                                         reload();
@@ -254,7 +254,7 @@ fn AddPathInput(props: AddPathInputProps) -> Element {
                 onclick: move |_| {
                     let tok = token.clone();
                     let path = path_input().trim().to_string();
-                    let on_added = props.on_added.clone();
+                    let on_added = props.on_added;
                     if path.is_empty() { return; }
                     spawn(async move {
                         match api::add_library_path(&tok, lib_id, &path).await {
@@ -300,7 +300,7 @@ fn CreateLibraryModal(props: CreateLibraryModalProps) -> Element {
         loading.set(true);
         error.set(None);
         let tok = token.clone();
-        let on_created = props.on_created.clone();
+        let on_created = props.on_created;
         spawn(async move {
             let desc = description();
             let req = CreateLibraryRequest {
@@ -412,7 +412,7 @@ fn EditLibraryModal(props: EditLibraryModalProps) -> Element {
         loading.set(true);
         error.set(None);
         let tok = token.clone();
-        let on_saved = props.on_saved.clone();
+        let on_saved = props.on_saved;
         spawn(async move {
             let desc = description();
             let req = UpdateLibraryRequest {
@@ -571,7 +571,7 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
         }
     };
 
-    let mut initial_load = load_providers.clone();
+    let initial_load = load_providers.clone();
     use_effect(move || {
         initial_load();
     });
@@ -594,7 +594,7 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                             _ => name.clone(),
                         };
                         let enabled = prov.is_enabled;
-                        let priority = prov.priority;
+                        let _priority = prov.priority;
                         let is_first = idx == 0;
                         let is_last = idx == total - 1;
                         let tok = token.clone();
@@ -632,12 +632,12 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                         onclick: {
                                             let name = name.clone();
                                             let tok = tok.clone();
-                                            let mut reload = reload.clone();
+                                            let reload = reload.clone();
                                             let prev_name = prev_name.clone();
                                             move |_| {
                                                 let tok = tok.clone();
                                                 let name = name.clone();
-                                                let mut reload = reload.clone();
+                                                let reload = reload.clone();
                                                 if let Some(ref other) = prev_name {
                                                     let other = other.clone();
                                                     spawn(async move {
@@ -655,12 +655,12 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                         onclick: {
                                             let name = name.clone();
                                             let tok = tok.clone();
-                                            let mut reload = reload.clone();
+                                            let reload = reload.clone();
                                             let next_name = next_name.clone();
                                             move |_| {
                                                 let tok = tok.clone();
                                                 let name = name.clone();
-                                                let mut reload = reload.clone();
+                                                let reload = reload.clone();
                                                 if let Some(ref other) = next_name {
                                                     let other = other.clone();
                                                     spawn(async move {
@@ -679,12 +679,12 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
                                             onchange: {
                                                 let name = name.clone();
                                                 let tok = tok.clone();
-                                                let mut reload = reload.clone();
+                                                let reload = reload.clone();
                                                 move |e: Event<FormData>| {
                                                     let new_enabled = e.checked();
                                                     let tok = tok.clone();
                                                     let name = name.clone();
-                                                    let mut reload = reload.clone();
+                                                    let reload = reload.clone();
                                                     spawn(async move {
                                                         let _ = api::update_provider(&tok, lib_id, &name, new_enabled).await;
                                                         reload();

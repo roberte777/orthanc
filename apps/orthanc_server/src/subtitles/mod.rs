@@ -92,11 +92,10 @@ impl SubtitleManager {
         let cache_path = self.cache_path(stream.id);
 
         // Fast path: cache hit.
-        if let Ok(meta) = tokio::fs::metadata(&cache_path).await {
-            if meta.len() > 0 {
+        if let Ok(meta) = tokio::fs::metadata(&cache_path).await
+            && meta.len() > 0 {
                 return Ok(cache_path);
             }
-        }
 
         // Obtain the per-stream lock.
         let lock = {
@@ -108,11 +107,10 @@ impl SubtitleManager {
         let _guard = lock.lock().await;
 
         // Re-check cache under the lock.
-        if let Ok(meta) = tokio::fs::metadata(&cache_path).await {
-            if meta.len() > 0 {
+        if let Ok(meta) = tokio::fs::metadata(&cache_path).await
+            && meta.len() > 0 {
                 return Ok(cache_path);
             }
-        }
 
         // Determine extraction source
         let (input_path, map_arg): (PathBuf, Option<String>) = if stream.is_external {

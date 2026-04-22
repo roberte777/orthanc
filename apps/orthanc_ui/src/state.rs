@@ -2,6 +2,7 @@ use crate::api::UserResponse;
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub struct AuthState {
     pub user: Option<UserResponse>,
     pub access_token: Option<String>,
@@ -18,31 +19,6 @@ impl AuthState {
     }
 }
 
-impl Default for AuthState {
-    fn default() -> Self {
-        // Try to load from localStorage on WASM
-        #[cfg(target_arch = "wasm32")]
-        {
-            let access_token = web_sys::window()
-                .and_then(|w| w.local_storage().ok().flatten())
-                .and_then(|s| s.get_item("access_token").ok().flatten());
-            let refresh_token = web_sys::window()
-                .and_then(|w| w.local_storage().ok().flatten())
-                .and_then(|s| s.get_item("refresh_token").ok().flatten());
-            return Self {
-                user: None,
-                access_token,
-                refresh_token,
-            };
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        Self {
-            user: None,
-            access_token: None,
-            refresh_token: None,
-        }
-    }
-}
 
 pub fn save_auth(access_token: &str, refresh_token: &str) {
     #[cfg(target_arch = "wasm32")]

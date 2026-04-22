@@ -136,7 +136,7 @@ pub fn ShowDetail(id: i64) -> Element {
     let mut active_season = use_signal(|| 0usize);
     let mut refresh_msg = use_signal(|| Option::<String>::None);
 
-    let mut cache_bust = use_signal(|| 0u32);
+    let _cache_bust = use_signal(|| 0u32);
 
     let mut load_count = use_signal(|| 0u32);
 
@@ -153,7 +153,7 @@ pub fn ShowDetail(id: i64) -> Element {
         });
     };
 
-    let mut initial_load = load_show.clone();
+    let initial_load = load_show;
     use_effect(move || {
         initial_load();
     });
@@ -260,13 +260,13 @@ pub fn ShowDetail(id: i64) -> Element {
                     if is_admin {
                         div { class: "detail-admin-actions",
                             {
-                                let mut reload = load_show.clone();
+                                let reload = load_show;
                                 rsx! {
                                     button {
                                         class: "btn-admin-refresh",
                                         onclick: move |_| {
                                             let token = auth.read().access_token.clone().unwrap_or_default();
-                                            let mut reload2 = reload.clone();
+                                            let reload2 = reload;
                                             refresh_msg.set(Some("Refreshing...".to_string()));
                                             spawn(async move {
                                                 match api::refresh_metadata(&token, id, "standard").await {
@@ -284,7 +284,7 @@ pub fn ShowDetail(id: i64) -> Element {
                                         class: "btn-admin-refresh",
                                         onclick: move |_| {
                                             let token = auth.read().access_token.clone().unwrap_or_default();
-                                            let mut reload2 = reload.clone();
+                                            let reload2 = reload;
                                             refresh_msg.set(Some("Full refresh...".to_string()));
                                             spawn(async move {
                                                 match api::refresh_metadata(&token, id, "full").await {
@@ -345,7 +345,7 @@ fn EpisodeRow(episode: MediaItemResponse, cache_bust: u32) -> Element {
         .backdrop_url
         .clone()
         .map(|p| format!("{}{}?v={}", api_base(), p, cache_bust));
-    let has_thumb = thumb_src.is_some();
+    let _has_thumb = thumb_src.is_some();
     let nav = use_navigator();
 
     rsx! {

@@ -114,8 +114,8 @@ async fn scan_all_due_libraries(
             .unwrap_or(default_interval);
 
         // Check if enough time has passed since last scan
-        if let Some(ref last_scan) = lib.last_scan_at {
-            if let Ok(last) = chrono::NaiveDateTime::parse_from_str(last_scan, "%Y-%m-%d %H:%M:%S")
+        if let Some(ref last_scan) = lib.last_scan_at
+            && let Ok(last) = chrono::NaiveDateTime::parse_from_str(last_scan, "%Y-%m-%d %H:%M:%S")
             {
                 let now = chrono::Utc::now().naive_utc();
                 let elapsed = now.signed_duration_since(last);
@@ -123,7 +123,6 @@ async fn scan_all_due_libraries(
                     continue;
                 }
             }
-        }
 
         info!("Background scan: scanning '{}'", lib.name);
         match scan_library(db, lib, ffprobe_path).await {
@@ -595,9 +594,9 @@ pub async fn probe_and_store_streams(
     }
 
     // Update duration from format
-    if let Some(ref fmt) = probe.format {
-        if let Some(ref dur_str) = fmt.duration {
-            if let Ok(dur) = dur_str.parse::<f64>() {
+    if let Some(ref fmt) = probe.format
+        && let Some(ref dur_str) = fmt.duration
+            && let Ok(dur) = dur_str.parse::<f64>() {
                 let _ = sqlx::query(
                     "UPDATE media_items SET duration_seconds = ? WHERE id = ? AND (duration_seconds IS NULL OR duration_seconds = 0)",
                 )
@@ -606,8 +605,6 @@ pub async fn probe_and_store_streams(
                 .execute(db)
                 .await;
             }
-        }
-    }
 
     debug!(
         "Stored {} streams for media_item {}",
@@ -665,9 +662,9 @@ pub async fn sync_external_subtitles(
 
     // Remove rows for sidecars that have been deleted from disk
     for (row_id, path) in &existing {
-        if let Some(p) = path {
-            if !discovered_paths.contains(p) {
-                if let Err(e) = sqlx::query("DELETE FROM media_streams WHERE id = ?")
+        if let Some(p) = path
+            && !discovered_paths.contains(p)
+                && let Err(e) = sqlx::query("DELETE FROM media_streams WHERE id = ?")
                     .bind(row_id)
                     .execute(db)
                     .await
@@ -677,8 +674,6 @@ pub async fn sync_external_subtitles(
                         row_id, e
                     );
                 }
-            }
-        }
     }
 
     // Find the highest existing synthetic index so we can append without collisions

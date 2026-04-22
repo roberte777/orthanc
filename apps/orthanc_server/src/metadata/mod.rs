@@ -199,9 +199,9 @@ async fn refresh_item_tmdb(
                         .bind(parent_id)
                         .fetch_optional(db)
                         .await?;
-                if let Some(parent) = parent {
-                    if let Some(ref id_str) = parent.tmdb_id {
-                        if let Ok(tmdb_id) = id_str.parse::<u64>() {
+                if let Some(parent) = parent
+                    && let Some(ref id_str) = parent.tmdb_id
+                        && let Ok(tmdb_id) = id_str.parse::<u64>() {
                             return refresh_season(
                                 db,
                                 client,
@@ -212,8 +212,6 @@ async fn refresh_item_tmdb(
                             )
                             .await;
                         }
-                    }
-                }
             }
             Ok(false)
         }
@@ -224,17 +222,17 @@ async fn refresh_item_tmdb(
                         .bind(season_id)
                         .fetch_optional(db)
                         .await?;
-                if let Some(season) = season {
-                    if let Some(show_id) = season.parent_id {
+                if let Some(season) = season
+                    && let Some(show_id) = season.parent_id {
                         let show = sqlx::query_as::<_, MediaItem>(
                             "SELECT * FROM media_items WHERE id = ?",
                         )
                         .bind(show_id)
                         .fetch_optional(db)
                         .await?;
-                        if let Some(show) = show {
-                            if let Some(ref id_str) = show.tmdb_id {
-                                if let Ok(tmdb_id) = id_str.parse::<u64>() {
+                        if let Some(show) = show
+                            && let Some(ref id_str) = show.tmdb_id
+                                && let Ok(tmdb_id) = id_str.parse::<u64>() {
                                     let season_num = season.season_number.unwrap_or(1) as u32;
                                     return refresh_episode(
                                         db,
@@ -247,10 +245,7 @@ async fn refresh_item_tmdb(
                                     )
                                     .await;
                                 }
-                            }
-                        }
                     }
-                }
             }
             Ok(false)
         }
@@ -410,44 +405,39 @@ async fn refresh_movie(
     }
 
     // Update fields — in Standard mode, only fill NULLs
-    if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref overview) = detail.overview {
+    if (mode == RefreshMode::Full || item.description.is_none())
+        && let Some(ref overview) = detail.overview {
             sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                 .bind(overview)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(rating) = detail.vote_average {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(rating) = detail.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                 .bind(rating)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.content_rating.is_none() {
-        if let Some(ref cr) = content_rating {
+    if (mode == RefreshMode::Full || item.content_rating.is_none())
+        && let Some(ref cr) = content_rating {
             sqlx::query("UPDATE media_items SET content_rating = ? WHERE id = ?")
                 .bind(cr)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.tagline.is_none() {
-        if let Some(ref tagline) = detail.tagline {
-            if !tagline.is_empty() {
+    if (mode == RefreshMode::Full || item.tagline.is_none())
+        && let Some(ref tagline) = detail.tagline
+            && !tagline.is_empty() {
                 sqlx::query("UPDATE media_items SET tagline = ? WHERE id = ?")
                     .bind(tagline)
                     .bind(item.id)
                     .execute(db)
                     .await?;
             }
-        }
-    }
 
     // Always update IDs
     sqlx::query("UPDATE media_items SET tmdb_id = ?, imdb_id = COALESCE(imdb_id, ?), duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?")
@@ -547,44 +537,39 @@ async fn refresh_show(
             .await?;
     }
 
-    if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref overview) = detail.overview {
+    if (mode == RefreshMode::Full || item.description.is_none())
+        && let Some(ref overview) = detail.overview {
             sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                 .bind(overview)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(rating) = detail.vote_average {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(rating) = detail.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                 .bind(rating)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.content_rating.is_none() {
-        if let Some(ref cr) = content_rating {
+    if (mode == RefreshMode::Full || item.content_rating.is_none())
+        && let Some(ref cr) = content_rating {
             sqlx::query("UPDATE media_items SET content_rating = ? WHERE id = ?")
                 .bind(cr)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
-    if mode == RefreshMode::Full || item.tagline.is_none() {
-        if let Some(ref tagline) = detail.tagline {
-            if !tagline.is_empty() {
+    if (mode == RefreshMode::Full || item.tagline.is_none())
+        && let Some(ref tagline) = detail.tagline
+            && !tagline.is_empty() {
                 sqlx::query("UPDATE media_items SET tagline = ? WHERE id = ?")
                     .bind(tagline)
                     .bind(item.id)
                     .execute(db)
                     .await?;
             }
-        }
-    }
 
     let imdb_id = detail.external_ids.as_ref().and_then(|e| e.imdb_id.clone());
     let tvdb_id = detail
@@ -676,17 +661,15 @@ async fn refresh_season(
         .await?;
     }
 
-    if mode == RefreshMode::Full || season_item.description.is_none() {
-        if let Some(ref overview) = season_detail.overview {
-            if !overview.is_empty() {
+    if (mode == RefreshMode::Full || season_item.description.is_none())
+        && let Some(ref overview) = season_detail.overview
+            && !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview)
                     .bind(season_item.id)
                     .execute(db)
                     .await?;
             }
-        }
-    }
 
     // Refresh episodes
     let local_episodes = sqlx::query_as::<_, MediaItem>(
@@ -724,8 +707,8 @@ async fn refresh_episode(
 ) -> Result<bool, anyhow::Error> {
     let ep_num = ep_item.episode_number.unwrap_or(0) as u32;
 
-    if let Some(season_detail) = client.tv_season_detail(show_tmdb_id, season_num).await? {
-        if let Some(tmdb_ep) = season_detail
+    if let Some(season_detail) = client.tv_season_detail(show_tmdb_id, season_num).await?
+        && let Some(tmdb_ep) = season_detail
             .episodes
             .iter()
             .find(|e| e.episode_number == ep_num)
@@ -733,7 +716,6 @@ async fn refresh_episode(
             update_episode_from_tmdb(db, client, image_cache_dir, ep_item, tmdb_ep, mode).await?;
             return Ok(true);
         }
-    }
 
     Ok(false)
 }
@@ -770,8 +752,8 @@ async fn refresh_show_anidb(
             .await?;
     }
 
-    if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref desc) = detail.description {
+    if (mode == RefreshMode::Full || item.description.is_none())
+        && let Some(ref desc) = detail.description {
             let cleaned = anidb::clean_description(desc);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
@@ -781,23 +763,18 @@ async fn refresh_show_anidb(
                     .await?;
             }
         }
-    }
 
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(ref ratings) = detail.ratings {
-            if let Some(ref perm) = ratings.permanent {
-                if let Some(ref val) = perm.value {
-                    if let Ok(r) = val.parse::<f64>() {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(ref ratings) = detail.ratings
+            && let Some(ref perm) = ratings.permanent
+                && let Some(ref val) = perm.value
+                    && let Ok(r) = val.parse::<f64>() {
                         sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                             .bind(r)
                             .bind(item.id)
                             .execute(db)
                             .await?;
                     }
-                }
-            }
-        }
-    }
 
     // Poster
     if let Some(ref picture) = detail.picture {
@@ -902,8 +879,8 @@ async fn refresh_movie_anidb(
             .await?;
     }
 
-    if mode == RefreshMode::Full || item.description.is_none() {
-        if let Some(ref desc) = detail.description {
+    if (mode == RefreshMode::Full || item.description.is_none())
+        && let Some(ref desc) = detail.description {
             let cleaned = anidb::clean_description(desc);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
@@ -913,23 +890,18 @@ async fn refresh_movie_anidb(
                     .await?;
             }
         }
-    }
 
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(ref ratings) = detail.ratings {
-            if let Some(ref perm) = ratings.permanent {
-                if let Some(ref val) = perm.value {
-                    if let Ok(r) = val.parse::<f64>() {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(ref ratings) = detail.ratings
+            && let Some(ref perm) = ratings.permanent
+                && let Some(ref val) = perm.value
+                    && let Ok(r) = val.parse::<f64>() {
                         sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                             .bind(r)
                             .bind(item.id)
                             .execute(db)
                             .await?;
                     }
-                }
-            }
-        }
-    }
 
     if let Some(ref picture) = detail.picture {
         save_anidb_image(
@@ -970,8 +942,8 @@ async fn update_episode_from_anidb(
             .await?;
     }
 
-    if mode == RefreshMode::Full || ep_item.description.is_none() {
-        if let Some(ref summary) = anidb_ep.summary {
+    if (mode == RefreshMode::Full || ep_item.description.is_none())
+        && let Some(ref summary) = anidb_ep.summary {
             let cleaned = anidb::clean_description(summary);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
@@ -981,7 +953,6 @@ async fn update_episode_from_anidb(
                     .await?;
             }
         }
-    }
 
     if let Some(title) = anidb_ep.english_title() {
         // Only override title if it looks like a generic "Episode X" title
@@ -1122,26 +1093,24 @@ async fn refresh_show_tvdb(
             .as_ref()
             .and_then(|t| t.overview.as_deref())
             .or(detail.overview.as_deref());
-        if let Some(overview) = overview {
-            if !overview.is_empty() {
+        if let Some(overview) = overview
+            && !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview)
                     .bind(item.id)
                     .execute(db)
                     .await?;
             }
-        }
     }
 
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(score) = detail.score {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(score) = detail.score {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                 .bind(score)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
 
     sqlx::query("UPDATE media_items SET tvdb_id = ? WHERE id = ?")
         .bind(tvdb_id.to_string())
@@ -1196,8 +1165,8 @@ async fn refresh_show_tvdb(
         let season_num = season_item.season_number.unwrap_or(0) as u32;
         if let Some(tvdb_season) = detail.seasons.iter().find(|s| {
             s.number == Some(season_num) && s.season_type.as_ref().and_then(|t| t.id) == Some(1)
-        }) {
-            if let Some(ref img) = tvdb_season.image {
+        })
+            && let Some(ref img) = tvdb_season.image {
                 save_tvdb_image(
                     db,
                     client,
@@ -1209,7 +1178,6 @@ async fn refresh_show_tvdb(
                 )
                 .await?;
             }
-        }
     }
 
     // Episodes
@@ -1294,26 +1262,24 @@ async fn refresh_movie_tvdb(
             .as_ref()
             .and_then(|t| t.overview.as_deref())
             .or(detail.overview.as_deref());
-        if let Some(overview) = overview {
-            if !overview.is_empty() {
+        if let Some(overview) = overview
+            && !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview)
                     .bind(item.id)
                     .execute(db)
                     .await?;
             }
-        }
     }
 
-    if mode == RefreshMode::Full || item.rating.is_none() {
-        if let Some(score) = detail.score {
+    if (mode == RefreshMode::Full || item.rating.is_none())
+        && let Some(score) = detail.score {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                 .bind(score)
                 .bind(item.id)
                 .execute(db)
                 .await?;
         }
-    }
 
     if let Some(runtime) = detail.runtime {
         sqlx::query(
@@ -1392,27 +1358,24 @@ async fn update_episode_from_tvdb(
             .await?;
     }
 
-    if mode == RefreshMode::Full || ep_item.description.is_none() {
-        if let Some(ref overview) = tvdb_ep.overview {
-            if !overview.is_empty() {
+    if (mode == RefreshMode::Full || ep_item.description.is_none())
+        && let Some(ref overview) = tvdb_ep.overview
+            && !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview)
                     .bind(ep_item.id)
                     .execute(db)
                     .await?;
             }
-        }
-    }
 
-    if let Some(ref name) = tvdb_ep.name {
-        if !name.is_empty() && ep_item.title.starts_with("Episode ") {
+    if let Some(ref name) = tvdb_ep.name
+        && !name.is_empty() && ep_item.title.starts_with("Episode ") {
             sqlx::query("UPDATE media_items SET title = ? WHERE id = ?")
                 .bind(name)
                 .bind(ep_item.id)
                 .execute(db)
                 .await?;
         }
-    }
 
     if let Some(runtime) = tvdb_ep.runtime {
         sqlx::query(
@@ -1513,27 +1476,24 @@ async fn update_episode_from_tmdb(
             .await?;
     }
 
-    if mode == RefreshMode::Full || ep_item.description.is_none() {
-        if let Some(ref overview) = tmdb_ep.overview {
-            if !overview.is_empty() {
+    if (mode == RefreshMode::Full || ep_item.description.is_none())
+        && let Some(ref overview) = tmdb_ep.overview
+            && !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
                     .bind(overview)
                     .bind(ep_item.id)
                     .execute(db)
                     .await?;
             }
-        }
-    }
 
-    if mode == RefreshMode::Full || ep_item.rating.is_none() {
-        if let Some(rating) = tmdb_ep.vote_average {
+    if (mode == RefreshMode::Full || ep_item.rating.is_none())
+        && let Some(rating) = tmdb_ep.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
                 .bind(rating)
                 .bind(ep_item.id)
                 .execute(db)
                 .await?;
         }
-    }
 
     if let Some(runtime) = tmdb_ep.runtime {
         sqlx::query(

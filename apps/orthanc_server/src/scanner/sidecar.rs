@@ -82,7 +82,7 @@ pub fn discover_sidecars(video_path: &Path) -> Vec<SidecarInfo> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let mut scanned_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    let mut scan =
+    let scan =
         |dir: &Path, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
             let key = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
             if seen.insert(key) {

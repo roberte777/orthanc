@@ -122,8 +122,7 @@ async fn list_libraries(
     for lib in libraries {
         result.push(
             fetch_library_response(&state.db, lib)
-                .await
-                .map_err(anyhow::Error::from)?,
+                .await?,
         );
     }
 
@@ -143,8 +142,7 @@ async fn get_library(
         .ok_or(ApiError::NotFound("Library not found".to_string()))?;
 
     let resp = fetch_library_response(&state.db, library)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(resp))
 }
@@ -229,8 +227,7 @@ async fn create_library(
     .map_err(anyhow::Error::from)?;
 
     let resp = fetch_library_response(&state.db, library)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(resp))
 }
@@ -278,8 +275,7 @@ async fn update_library(
     .map_err(anyhow::Error::from)?;
 
     let resp = fetch_library_response(&state.db, updated)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(resp))
 }
@@ -400,12 +396,11 @@ async fn scan_library(
         .ok_or(ApiError::NotFound("Library not found".to_string()))?;
 
     let result = crate::scanner::scan_library(&state.db, &library, &state.ffprobe_path)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     // Auto-fetch metadata for any new items
-    if result.added > 0 {
-        if let Some(ref api_key) = state.tmdb_api_key {
+    if result.added > 0
+        && let Some(ref api_key) = state.tmdb_api_key {
             let db = state.db.clone();
             let api_key = api_key.clone();
             let tvdb_key = state.tvdb_api_key.clone();
@@ -425,7 +420,6 @@ async fn scan_library(
                 }
             });
         }
-    }
 
     Ok(Json(result))
 }
@@ -597,8 +591,7 @@ async fn swap_providers(
     }
 
     normalize_provider_priorities(&state.db, id)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     Ok(Json(serde_json::json!({"message": "Providers swapped"})))
 }

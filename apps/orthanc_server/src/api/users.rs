@@ -77,7 +77,7 @@ async fn create_user(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateUserRequest>,
 ) -> ApiResult<Json<UserResponse>> {
-    let password_hash = hash_password(&req.password).map_err(anyhow::Error::from)?;
+    let password_hash = hash_password(&req.password)?;
 
     let user = sqlx::query_as::<_, crate::models::user::User>(
         "INSERT INTO users (username, email, password_hash, display_name, is_admin)

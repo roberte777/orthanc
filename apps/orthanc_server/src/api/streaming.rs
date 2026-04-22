@@ -652,11 +652,10 @@ impl Drop for StreamGuard {
 }
 
 fn detect_mime_type(db_mime: Option<&str>, file_path: &str) -> String {
-    if let Some(mime) = db_mime {
-        if !mime.is_empty() {
+    if let Some(mime) = db_mime
+        && !mime.is_empty() {
             return mime.to_string();
         }
-    }
     match file_path
         .rsplit('.')
         .next()
@@ -1101,11 +1100,10 @@ async fn serve_subtitle(
     .map_err(anyhow::Error::from)?
     .ok_or(ApiError::NotFound("subtitle stream not found".into()))?;
 
-    if let Some(tok_id) = token_media_id {
-        if tok_id != stream.media_item_id {
+    if let Some(tok_id) = token_media_id
+        && tok_id != stream.media_item_id {
             return Err(ApiError::Unauthorized);
         }
-    }
 
     let item = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
         .bind(stream.media_item_id)

@@ -102,13 +102,13 @@ async fn change_password(
         .map_err(anyhow::Error::from)?
         .ok_or(ApiError::NotFound("User not found".to_string()))?;
 
-    if !verify_password(&req.current_password, &user.password_hash).map_err(anyhow::Error::from)? {
+    if !verify_password(&req.current_password, &user.password_hash)? {
         return Err(ApiError::BadRequest(
             "Current password is incorrect".to_string(),
         ));
     }
 
-    let new_hash = hash_password(&req.new_password).map_err(anyhow::Error::from)?;
+    let new_hash = hash_password(&req.new_password)?;
 
     sqlx::query("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
         .bind(&new_hash)

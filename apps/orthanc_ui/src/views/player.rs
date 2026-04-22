@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use web_sys::wasm_bindgen::{self, JsCast};
+use web_sys::wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::state::{self, AuthState, with_refresh};
@@ -54,8 +54,8 @@ fn probe_client_capabilities() -> (Vec<String>, Vec<String>, Vec<String>) {
     })()"#;
 
     let result = js_sys::eval(js);
-    if let Ok(val) = result {
-        if let Some(s) = val.as_string() {
+    if let Ok(val) = result
+        && let Some(s) = val.as_string() {
             #[derive(serde::Deserialize)]
             struct Caps {
                 v: Vec<String>,
@@ -66,7 +66,6 @@ fn probe_client_capabilities() -> (Vec<String>, Vec<String>, Vec<String>) {
                 return (caps.v, caps.a, caps.c);
             }
         }
-    }
     // Fallback: empty = server uses defaults
     (vec![], vec![], vec![])
 }
@@ -201,11 +200,10 @@ fn audio_label(t: &api::AudioTrack) -> String {
         };
         chips.push(pretty);
     }
-    if let Some(title) = &t.title {
-        if t.language.as_ref().map(|l| l != title).unwrap_or(true) {
+    if let Some(title) = &t.title
+        && t.language.as_ref().map(|l| l != title).unwrap_or(true) {
             chips.push(title.clone());
         }
-    }
     if t.is_default {
         chips.push("Default".to_string());
     }
@@ -220,13 +218,13 @@ fn audio_label(t: &api::AudioTrack) -> String {
 pub fn Player(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
     let mut stream_url = use_signal(|| None::<String>);
-    let mut stream_mode = use_signal(|| String::new());
+    let mut stream_mode = use_signal(String::new);
     let mut error_msg = use_signal(|| None::<String>);
     let mut is_playing = use_signal(|| false);
     let mut current_time = use_signal(|| 0.0_f64);
     let mut duration = use_signal(|| 0.0_f64);
     let mut show_controls = use_signal(|| true);
-    let mut last_activity = use_signal(|| js_sys::Date::now());
+    let mut last_activity = use_signal(js_sys::Date::now);
     // True on the pointerdown that revealed hidden controls, so the follow-up
     // click does not also toggle playback. Cleared inside on_container_click.
     let mut just_revealed_controls = use_signal(|| false);
@@ -246,10 +244,10 @@ pub fn Player(id: i64) -> Element {
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|&s| s > 0.0)
         .unwrap_or(10.0);
-    let mut title = use_signal(|| String::new());
+    let mut title = use_signal(String::new);
     let mut last_save_time = use_signal(|| 0.0_f64);
     let mut transcode_session_id = use_signal(|| None::<String>);
-    let mut stream_token = use_signal(|| String::new());
+    let mut stream_token = use_signal(String::new);
     // True while a seek restart is in progress (suppress ontimeupdate)
     let mut seeking = use_signal(|| false);
     // True when the video element is waiting for data (buffering)
@@ -279,7 +277,7 @@ pub fn Player(id: i64) -> Element {
 
     // Helper: apply the currently-selected subtitle (or detach if None).
     // Reads the latest signals each call so it's correct across seeks.
-    let mut apply_selected_subtitle = move || {
+    let apply_selected_subtitle = move || {
         let maybe_id = selected_subtitle_id();
         let subs = available_subtitles();
         let token = stream_token();
@@ -369,11 +367,10 @@ pub fn Player(id: i64) -> Element {
                 )
                 .await;
 
-            if let Ok(progress) = progress_result {
-                if !progress.is_completed && progress.position_seconds > 0 {
+            if let Ok(progress) = progress_result
+                && !progress.is_completed && progress.position_seconds > 0 {
                     resume_time = progress.position_seconds as f64;
                 }
-            }
 
             // Probe client codec support
             let (video_codecs, audio_codecs, containers) = probe_client_capabilities();
@@ -414,11 +411,10 @@ pub fn Player(id: i64) -> Element {
                     title.set(resp.title.clone());
                     transcode_session_id.set(resp.transcode_session_id.clone());
                     stream_token.set(resp.token.clone());
-                    if let Some(dur) = resp.duration_seconds {
-                        if dur > 0 {
+                    if let Some(dur) = resp.duration_seconds
+                        && dur > 0 {
                             duration.set(dur as f64);
                         }
-                    }
 
                     // Seed subtitle state
                     available_subtitles.set(resp.subtitles.clone());
@@ -678,11 +674,10 @@ pub fn Player(id: i64) -> Element {
         }
         if let Ok(t) = evt.value().parse::<f64>() {
             current_time.set(t);
-            if transcode_session_id().is_none() {
-                if let Some(video) = get_video() {
+            if transcode_session_id().is_none()
+                && let Some(video) = get_video() {
                     video.set_current_time(t);
                 }
-            }
         }
     };
 
@@ -698,12 +693,11 @@ pub fn Player(id: i64) -> Element {
     };
 
     let on_volume = move |evt: Event<FormData>| {
-        if let Some(video) = get_video() {
-            if let Ok(v) = evt.value().parse::<f64>() {
+        if let Some(video) = get_video()
+            && let Ok(v) = evt.value().parse::<f64>() {
                 video.set_volume(v);
                 volume.set(v);
             }
-        }
     };
 
     let on_mouse_move = move |_: MouseEvent| {
@@ -763,8 +757,8 @@ pub fn Player(id: i64) -> Element {
     });
 
     let toggle_fullscreen = move |_| {
-        if let Some(window) = web_sys::window() {
-            if let Some(document) = window.document() {
+        if let Some(window) = web_sys::window()
+            && let Some(document) = window.document() {
                 // If already fullscreen, exit; otherwise enter
                 if document.fullscreen_element().is_some() {
                     document.exit_fullscreen();
@@ -772,7 +766,6 @@ pub fn Player(id: i64) -> Element {
                     let _ = el.request_fullscreen();
                 }
             }
-        }
     };
 
     // Select a subtitle track (by id). None = off.

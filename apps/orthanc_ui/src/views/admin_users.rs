@@ -43,11 +43,11 @@ pub fn AdminUsers() -> Element {
         });
     };
 
-    let mut load_for_effect = load_users.clone();
-    let load_for_create = load_users.clone();
-    let load_for_delete = load_users.clone();
+    let load_for_effect = load_users;
+    let load_for_create = load_users;
+    let load_for_delete = load_users;
 
-    use_effect(move || load_for_effect());
+    use_effect(load_for_effect);
 
     let current_user_id = auth.read().user.as_ref().map(|u| u.id);
 
@@ -89,7 +89,7 @@ pub fn AdminUsers() -> Element {
                                     let tok2 = auth.read().access_token.clone().unwrap_or_default();
                                     let is_active = user.is_active;
                                     let is_admin_user = user.is_admin;
-                                    let load_for_row = load_users.clone();
+                                    let load_for_row = load_users;
                                     rsx! {
                                         tr { key: "{uid}",
                                             td { "{user.username}" }
@@ -123,7 +123,7 @@ pub fn AdminUsers() -> Element {
                                                             onclick: move |_| {
                                                                 let tok = tok2.clone();
                                                                 let new_active = !is_active;
-                                                                let mut reload = load_for_row.clone();
+                                                                let mut reload = load_for_row;
                                                                 spawn(async move {
                                                                     let _ = api::update_user(
                                                                             &tok,
@@ -169,7 +169,7 @@ pub fn AdminUsers() -> Element {
                     token: auth.read().access_token.clone().unwrap_or_default(),
                     on_close: move |_| show_create.set(false),
                     on_created: {
-                        let mut reload = load_for_create.clone();
+                        let mut reload = load_for_create;
                         move |_| {
                             show_create.set(false);
                             reload();
@@ -197,7 +197,7 @@ pub fn AdminUsers() -> Element {
                                 onclick: move |_| {
                                     let tok = auth.read().access_token.clone().unwrap_or_default();
                                     delete_confirm.set(None);
-                                    let mut reload = load_for_delete.clone();
+                                    let mut reload = load_for_delete;
                                     spawn(async move {
                                         let _ = api::delete_user(&tok, uid).await;
                                         reload();
@@ -237,7 +237,7 @@ fn CreateUserModal(props: CreateUserModalProps) -> Element {
         loading.set(true);
         error.set(None);
         let tok = token.clone();
-        let on_created = props.on_created.clone();
+        let on_created = props.on_created;
         spawn(async move {
             let dn = display_name();
             let req = CreateUserRequest {
