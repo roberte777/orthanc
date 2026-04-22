@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use crate::api::{self, MediaItemResponse};
 use crate::state::{AuthState, with_refresh};
+use dioxus::prelude::*;
 
 fn format_size(bytes: Option<i64>) -> String {
     match bytes {
@@ -24,7 +24,11 @@ fn format_runtime(seconds: Option<i32>) -> String {
         Some(s) if s > 0 => {
             let h = s / 3600;
             let m = (s % 3600) / 60;
-            if h > 0 { format!("{}h {}m", h, m) } else { format!("{}m", m) }
+            if h > 0 {
+                format!("{}h {}m", h, m)
+            } else {
+                format!("{}m", m)
+            }
         }
         _ => String::new(),
     }
@@ -42,9 +46,12 @@ pub fn BrowseMovies() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            if let Ok(m) = with_refresh(auth, |token| async move {
-                api::get_all_movies(&token).await
-            }).await {
+            if let Ok(m) = with_refresh(
+                auth,
+                |token| async move { api::get_all_movies(&token).await },
+            )
+            .await
+            {
                 movies.set(m);
             }
             loading.set(false);
@@ -78,7 +85,10 @@ fn MovieGridCard(item: MediaItemResponse) -> Element {
     let year = format_year(&item.release_date);
     let id = item.id;
     let has_poster = item.poster_url.is_some();
-    let poster_src = item.poster_url.clone().map(|p| format!("{}{}", api_base(), p));
+    let poster_src = item
+        .poster_url
+        .clone()
+        .map(|p| format!("{}{}", api_base(), p));
 
     rsx! {
         Link {
@@ -122,9 +132,12 @@ pub fn MovieDetail(id: i64) -> Element {
 
     let load_movie = move || {
         spawn(async move {
-            match with_refresh(auth, |token| async move {
-                api::get_movie(&token, id).await
-            }).await {
+            match with_refresh(
+                auth,
+                |token| async move { api::get_movie(&token, id).await },
+            )
+            .await
+            {
                 Ok(m) => {
                     movie.set(Some(m));
                     load_count += 1;
@@ -136,7 +149,9 @@ pub fn MovieDetail(id: i64) -> Element {
     };
 
     let mut initial_load = load_movie.clone();
-    use_effect(move || { initial_load(); });
+    use_effect(move || {
+        initial_load();
+    });
 
     if loading() {
         return rsx! { div { class: "page", div { class: "loading", "Loading..." } } };
@@ -151,11 +166,21 @@ pub fn MovieDetail(id: i64) -> Element {
 
     let year = format_year(&m.release_date);
     let size = format_size(m.file_size_bytes);
-    let fmt = m.container_format.clone().unwrap_or_default().to_uppercase();
+    let fmt = m
+        .container_format
+        .clone()
+        .unwrap_or_default()
+        .to_uppercase();
     let runtime = format_runtime(m.duration_seconds);
     let cb = load_count();
-    let backdrop_src = m.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
-    let poster_src = m.poster_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
+    let backdrop_src = m
+        .backdrop_url
+        .clone()
+        .map(|p| format!("{}{}?v={}", api_base(), p, cb));
+    let poster_src = m
+        .poster_url
+        .clone()
+        .map(|p| format!("{}{}?v={}", api_base(), p, cb));
 
     rsx! {
         div { class: "detail-page",

@@ -71,32 +71,66 @@ mod tests {
     #[test]
     fn text_codecs_are_vtt() {
         for codec in ["subrip", "webvtt", "ass", "ssa", "mov_text", "text"] {
-            assert_eq!(classify(&stream("subtitle", Some(codec))), DeliveryMethod::Vtt, "codec {}", codec);
+            assert_eq!(
+                classify(&stream("subtitle", Some(codec))),
+                DeliveryMethod::Vtt,
+                "codec {}",
+                codec
+            );
         }
     }
 
     #[test]
     fn case_insensitive() {
-        assert_eq!(classify(&stream("subtitle", Some("SubRip"))), DeliveryMethod::Vtt);
-        assert_eq!(classify(&stream("subtitle", Some("ASS"))), DeliveryMethod::Vtt);
+        assert_eq!(
+            classify(&stream("subtitle", Some("SubRip"))),
+            DeliveryMethod::Vtt
+        );
+        assert_eq!(
+            classify(&stream("subtitle", Some("ASS"))),
+            DeliveryMethod::Vtt
+        );
     }
 
     #[test]
     fn bitmap_codecs_require_burn() {
-        for codec in ["hdmv_pgs_subtitle", "pgs", "dvd_subtitle", "vobsub", "dvb_subtitle"] {
-            assert_eq!(classify(&stream("subtitle", Some(codec))), DeliveryMethod::BurnRequired, "codec {}", codec);
+        for codec in [
+            "hdmv_pgs_subtitle",
+            "pgs",
+            "dvd_subtitle",
+            "vobsub",
+            "dvb_subtitle",
+        ] {
+            assert_eq!(
+                classify(&stream("subtitle", Some(codec))),
+                DeliveryMethod::BurnRequired,
+                "codec {}",
+                codec
+            );
         }
     }
 
     #[test]
     fn unknown_codec_unsupported() {
-        assert_eq!(classify(&stream("subtitle", Some("weirdformat"))), DeliveryMethod::Unsupported);
-        assert_eq!(classify(&stream("subtitle", None)), DeliveryMethod::Unsupported);
+        assert_eq!(
+            classify(&stream("subtitle", Some("weirdformat"))),
+            DeliveryMethod::Unsupported
+        );
+        assert_eq!(
+            classify(&stream("subtitle", None)),
+            DeliveryMethod::Unsupported
+        );
     }
 
     #[test]
     fn non_subtitle_always_unsupported() {
-        assert_eq!(classify(&stream("video", Some("h264"))), DeliveryMethod::Unsupported);
-        assert_eq!(classify(&stream("audio", Some("aac"))), DeliveryMethod::Unsupported);
+        assert_eq!(
+            classify(&stream("video", Some("h264"))),
+            DeliveryMethod::Unsupported
+        );
+        assert_eq!(
+            classify(&stream("audio", Some("aac"))),
+            DeliveryMethod::Unsupported
+        );
     }
 }

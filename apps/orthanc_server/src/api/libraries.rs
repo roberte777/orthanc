@@ -10,9 +10,9 @@ use crate::{
     },
 };
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router,
 };
 use std::sync::Arc;
 
@@ -27,10 +27,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/{id}/paths/{path_id}", axum::routing::delete(remove_path))
         .route("/{id}/scan", axum::routing::post(scan_library))
         .route("/{id}/media", get(list_media))
-        .route(
-            "/{id}/providers",
-            get(list_providers).put(update_provider),
-        )
+        .route("/{id}/providers", get(list_providers).put(update_provider))
         .route("/{id}/providers/swap", axum::routing::post(swap_providers))
 }
 
@@ -42,23 +39,19 @@ pub async fn create_default_libraries(db: &crate::db::DbPool) -> Result<(), anyh
         .await?;
 
     if count == 0 {
-        sqlx::query(
-            "INSERT INTO libraries (name, library_type, description) VALUES (?, ?, ?)",
-        )
-        .bind("Movies")
-        .bind("movies")
-        .bind("Default movie library")
-        .execute(db)
-        .await?;
+        sqlx::query("INSERT INTO libraries (name, library_type, description) VALUES (?, ?, ?)")
+            .bind("Movies")
+            .bind("movies")
+            .bind("Default movie library")
+            .execute(db)
+            .await?;
 
-        sqlx::query(
-            "INSERT INTO libraries (name, library_type, description) VALUES (?, ?, ?)",
-        )
-        .bind("TV Shows")
-        .bind("tv_shows")
-        .bind("Default TV show library")
-        .execute(db)
-        .await?;
+        sqlx::query("INSERT INTO libraries (name, library_type, description) VALUES (?, ?, ?)")
+            .bind("TV Shows")
+            .bind("tv_shows")
+            .bind("Default TV show library")
+            .execute(db)
+            .await?;
 
         // Add default metadata providers for all new libraries
         let libs: Vec<(i64,)> = sqlx::query_as("SELECT id FROM libraries")
@@ -120,12 +113,10 @@ async fn list_libraries(
     AdminUser(_): AdminUser,
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<LibraryResponse>>> {
-    let libraries = sqlx::query_as::<_, Library>(
-        "SELECT * FROM libraries ORDER BY created_at",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(anyhow::Error::from)?;
+    let libraries = sqlx::query_as::<_, Library>("SELECT * FROM libraries ORDER BY created_at")
+        .fetch_all(&state.db)
+        .await
+        .map_err(anyhow::Error::from)?;
 
     let mut result = Vec::with_capacity(libraries.len());
     for lib in libraries {
@@ -344,14 +335,13 @@ async fn add_path(
     }
 
     // Check for duplicate
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM library_paths WHERE library_id = ? AND path = ?",
-    )
-    .bind(id)
-    .bind(&req.path)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(anyhow::Error::from)?;
+    let existing: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM library_paths WHERE library_id = ? AND path = ?")
+            .bind(id)
+            .bind(&req.path)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
 
     if existing.is_some() {
         return Err(ApiError::Conflict(
@@ -376,14 +366,13 @@ async fn remove_path(
     State(state): State<Arc<AppState>>,
     Path((id, path_id)): Path<(i64, i64)>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM library_paths WHERE id = ? AND library_id = ?",
-    )
-    .bind(path_id)
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(anyhow::Error::from)?;
+    let existing: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM library_paths WHERE id = ? AND library_id = ?")
+            .bind(path_id)
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
 
     if existing.is_none() {
         return Err(ApiError::NotFound("Path not found".to_string()));
@@ -573,14 +562,20 @@ async fn swap_providers(
     let a: Option<(i32,)> = sqlx::query_as(
         "SELECT priority FROM library_metadata_providers WHERE library_id = ? AND provider = ?",
     )
-    .bind(id).bind(&req.provider_a)
-    .fetch_optional(&state.db).await.map_err(anyhow::Error::from)?;
+    .bind(id)
+    .bind(&req.provider_a)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
 
     let b: Option<(i32,)> = sqlx::query_as(
         "SELECT priority FROM library_metadata_providers WHERE library_id = ? AND provider = ?",
     )
-    .bind(id).bind(&req.provider_b)
-    .fetch_optional(&state.db).await.map_err(anyhow::Error::from)?;
+    .bind(id)
+    .bind(&req.provider_b)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(anyhow::Error::from)?;
 
     match (a, b) {
         (Some((prio_a,)), Some((prio_b,))) => {

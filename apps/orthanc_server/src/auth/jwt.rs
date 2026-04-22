@@ -1,10 +1,10 @@
 use anyhow::Result;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,   // user id as string
+    pub sub: String, // user id as string
     pub username: String,
     pub email: String,
     pub is_admin: bool,

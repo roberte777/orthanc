@@ -11,12 +11,12 @@ use crate::{
     transcoding,
 };
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
     routing::{get, post, put},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -158,14 +158,12 @@ async fn create_stream_token(
         .map_err(|_| ApiError::BadRequest("Invalid user id".into()))?;
 
     // Verify media item exists and has a file
-    let item = sqlx::query_as::<_, MediaItem>(
-        "SELECT * FROM media_items WHERE id = ?",
-    )
-    .bind(body.media_item_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(anyhow::Error::from)?
-    .ok_or(ApiError::NotFound("Media item not found".into()))?;
+    let item = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
+        .bind(body.media_item_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(anyhow::Error::from)?
+        .ok_or(ApiError::NotFound("Media item not found".into()))?;
 
     let file_path = item
         .file_path
@@ -220,7 +218,11 @@ async fn create_stream_token(
             .iter()
             .find(|s| s.id == burn_id && s.stream_type == "subtitle")
             .cloned()
-            .ok_or_else(|| ApiError::BadRequest("burn_subtitle_id does not match a subtitle stream for this item".into()))?;
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "burn_subtitle_id does not match a subtitle stream for this item".into(),
+                )
+            })?;
         burn_stream = Some(s);
     }
 
@@ -231,7 +233,11 @@ async fn create_stream_token(
             .iter()
             .find(|s| s.id == audio_id && s.stream_type == "audio")
             .cloned()
-            .ok_or_else(|| ApiError::BadRequest("audio_stream_id does not match an audio stream for this item".into()))?;
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "audio_stream_id does not match an audio stream for this item".into(),
+                )
+            })?;
         Some(s)
     } else {
         let pref_audio = pref
@@ -243,7 +249,11 @@ async fn create_stream_token(
                     .find(|s| s.stream_type == "audio" && s.language.as_deref() == Some(lang))
             });
         pref_audio
-            .or_else(|| streams.iter().find(|s| s.stream_type == "audio" && s.is_default))
+            .or_else(|| {
+                streams
+                    .iter()
+                    .find(|s| s.stream_type == "audio" && s.is_default)
+            })
             .or_else(|| streams.iter().find(|s| s.stream_type == "audio"))
             .cloned()
     };
@@ -295,20 +305,21 @@ async fn create_stream_token(
     // it overlaps with the 30-second wait_until_ready window.
     let prewarm_handle = spawn_subtitle_prewarm(state.clone(), streams.clone(), file_path.clone());
 
-    let (stream_url, transcode_session_id, actual_start_seconds) =
-        if mode == transcoding::TranscodeMode::Direct {
-            (
-                format!("/api/stream/{}?token={}", body.media_item_id, token),
-                None,
-                None,
-            )
-        } else {
-            // Start transcode session
-            let video_stream = streams.iter().find(|s| s.stream_type == "video");
+    let (stream_url, transcode_session_id, actual_start_seconds) = if mode
+        == transcoding::TranscodeMode::Direct
+    {
+        (
+            format!("/api/stream/{}?token={}", body.media_item_id, token),
+            None,
+            None,
+        )
+    } else {
+        // Start transcode session
+        let video_stream = streams.iter().find(|s| s.stream_type == "video");
 
-            let burn = build_burn_option(&state, burn_stream.as_ref(), &file_path).await?;
+        let burn = build_burn_option(&state, burn_stream.as_ref(), &file_path).await?;
 
-            let session = state
+        let session = state
                 .transcode_manager
                 .start_session(
                     user_id,
@@ -331,28 +342,32 @@ async fn create_stream_token(
                     }
                 })?;
 
-            // Wait for first segment (with timeout)
-            let sid = session.session_id.clone();
-            if !session.wait_until_ready(std::time::Duration::from_secs(30)).await {
-                tracing::warn!("Timed out waiting for transcode to produce first segment");
-            }
-            let actual = *session.actual_start_time.read().await;
-            let actual_opt = if actual > 0.0 { Some(actual) } else { None };
+        // Wait for first segment (with timeout)
+        let sid = session.session_id.clone();
+        if !session
+            .wait_until_ready(std::time::Duration::from_secs(30))
+            .await
+        {
+            tracing::warn!("Timed out waiting for transcode to produce first segment");
+        }
+        let actual = *session.actual_start_time.read().await;
+        let actual_opt = if actual > 0.0 { Some(actual) } else { None };
 
-            (
-                format!("/api/hls/{}/stream.m3u8?token={}", sid, token),
-                Some(sid),
-                actual_opt,
-            )
-        };
+        (
+            format!("/api/hls/{}/stream.m3u8?token={}", sid, token),
+            Some(sid),
+            actual_opt,
+        )
+    };
     // Best-effort pre-warm; we don't block on it here.
     drop(prewarm_handle);
 
-    let expiry_minutes = crate::api::settings::read_setting(&state.db, "stream_token_expiry_minutes")
-        .await
-        .and_then(|s| s.parse::<i64>().ok())
-        .filter(|&m| m > 0)
-        .unwrap_or(5);
+    let expiry_minutes =
+        crate::api::settings::read_setting(&state.db, "stream_token_expiry_minutes")
+            .await
+            .and_then(|s| s.parse::<i64>().ok())
+            .filter(|&m| m > 0)
+            .unwrap_or(5);
 
     let data = StreamTokenData {
         user_id,
@@ -361,7 +376,11 @@ async fn create_stream_token(
         transcode_session_id: transcode_session_id.clone(),
     };
 
-    state.stream_tokens.write().await.insert(token.clone(), data);
+    state
+        .stream_tokens
+        .write()
+        .await
+        .insert(token.clone(), data);
 
     // Clean expired tokens opportunistically
     let now = chrono::Utc::now();
@@ -523,7 +542,11 @@ async fn build_burn_option(
     }
     Ok(Some(transcoding::BurnSubtitle {
         stream_id: stream.id,
-        stream_index: if stream.is_external { None } else { Some(stream.stream_index) },
+        stream_index: if stream.is_external {
+            None
+        } else {
+            Some(stream.stream_index)
+        },
         external_file_path: stream.external_file_path.clone(),
         language: stream.language.clone(),
         title: stream.title.clone(),
@@ -661,9 +684,7 @@ async fn stream_media(
     // Validate stream token
     let user_id = {
         let tokens = state.stream_tokens.read().await;
-        let token_data = tokens
-            .get(&query.token)
-            .ok_or(ApiError::Unauthorized)?;
+        let token_data = tokens.get(&query.token).ok_or(ApiError::Unauthorized)?;
 
         if token_data.expires_at < chrono::Utc::now() {
             return Err(ApiError::Unauthorized);
@@ -709,12 +730,10 @@ async fn stream_media(
     let mime_type = detect_mime_type(item.mime_type.as_deref(), file_path);
 
     // Open the file
-    let file = tokio::fs::File::open(file_path)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to open media file '{}': {}", file_path, e);
-            ApiError::NotFound("Media file not found on disk".into())
-        })?;
+    let file = tokio::fs::File::open(file_path).await.map_err(|e| {
+        tracing::error!("Failed to open media file '{}': {}", file_path, e);
+        ApiError::NotFound("Media file not found on disk".into())
+    })?;
 
     let metadata = file
         .metadata()
@@ -801,10 +820,7 @@ fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
 // Bandwidth throttling
 // ---------------------------------------------------------------------------
 
-fn apply_throttle<S>(
-    stream: S,
-    max_bytes_per_sec: Option<u64>,
-) -> ThrottledStream<S> {
+fn apply_throttle<S>(stream: S, max_bytes_per_sec: Option<u64>) -> ThrottledStream<S> {
     ThrottledStream {
         inner: stream,
         max_bytes_per_sec,
@@ -921,9 +937,10 @@ async fn serve_hls(
         }
     };
 
-    let metadata = file.metadata().await.map_err(|e| {
-        ApiError::Internal(anyhow::anyhow!("Failed to read file metadata: {}", e))
-    })?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("Failed to read file metadata: {}", e)))?;
 
     let (content_type, cache_control) = if path.ends_with(".m3u8") {
         ("application/vnd.apple.mpegurl", "no-cache, no-store")
@@ -1117,7 +1134,8 @@ async fn serve_subtitle(
                 tracing::warn!("Refusing subtitle path outside library: {}", p);
                 ApiError::Forbidden
             }
-            crate::subtitles::SubtitleError::CacheEmpty | crate::subtitles::SubtitleError::Ffmpeg(_) => {
+            crate::subtitles::SubtitleError::CacheEmpty
+            | crate::subtitles::SubtitleError::Ffmpeg(_) => {
                 tracing::warn!("Subtitle extraction failed: {}", e);
                 ApiError::Internal(anyhow::anyhow!("subtitle extraction failed"))
             }

@@ -11,9 +11,9 @@ use crate::{
     models::user_preference,
 };
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, put},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -22,12 +22,14 @@ pub fn user_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/profile", get(get_profile).put(update_profile))
         .route("/password", put(change_password))
-        .route("/preferences", get(get_user_preferences).put(update_user_preferences))
+        .route(
+            "/preferences",
+            get(get_user_preferences).put(update_user_preferences),
+        )
 }
 
 pub fn admin_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/", get(get_server_settings).put(update_server_settings))
+    Router::new().route("/", get(get_server_settings).put(update_server_settings))
 }
 
 async fn get_profile(
@@ -100,9 +102,7 @@ async fn change_password(
         .map_err(anyhow::Error::from)?
         .ok_or(ApiError::NotFound("User not found".to_string()))?;
 
-    if !verify_password(&req.current_password, &user.password_hash)
-        .map_err(anyhow::Error::from)?
-    {
+    if !verify_password(&req.current_password, &user.password_hash).map_err(anyhow::Error::from)? {
         return Err(ApiError::BadRequest(
             "Current password is incorrect".to_string(),
         ));

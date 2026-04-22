@@ -7,9 +7,9 @@ use crate::{
     models::user::{CreateUserRequest, UpdateUserRequest, UserResponse},
 };
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -122,7 +122,10 @@ async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<UpdateUserRequest>,
 ) -> ApiResult<Json<UserResponse>> {
-    let admin_id: i64 = admin_claims.sub.parse().map_err(|_| ApiError::Unauthorized)?;
+    let admin_id: i64 = admin_claims
+        .sub
+        .parse()
+        .map_err(|_| ApiError::Unauthorized)?;
 
     // Prevent demoting self from admin or deactivating own account
     if id == admin_id {
@@ -180,7 +183,10 @@ async fn delete_user(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let admin_id: i64 = admin_claims.sub.parse().map_err(|_| ApiError::Unauthorized)?;
+    let admin_id: i64 = admin_claims
+        .sub
+        .parse()
+        .map_err(|_| ApiError::Unauthorized)?;
 
     if id == admin_id {
         return Err(ApiError::BadRequest(

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{RwLock, watch};
 use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
@@ -268,7 +268,10 @@ impl TranscodeSessionManager {
         // Any pre-existing contents are orphaned sessions from a previous process —
         // transcode sessions live only in memory, so nothing here can still be ours.
         if cache_dir.exists() {
-            info!("Clearing stale transcode cache at {:?} (may take a while)", cache_dir);
+            info!(
+                "Clearing stale transcode cache at {:?} (may take a while)",
+                cache_dir
+            );
             let start = Instant::now();
             // remove_dir_all can race with the OS on large trees (macOS APFS,
             // Spotlight, fseventsd) and return ENOTEMPTY. Retry a few times.
@@ -294,11 +297,17 @@ impl TranscodeSessionManager {
                 }
             }
             if let Some(e) = last_err {
-                warn!("Failed to clear stale transcode cache at {:?}: {}", cache_dir, e);
+                warn!(
+                    "Failed to clear stale transcode cache at {:?}: {}",
+                    cache_dir, e
+                );
             }
         }
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-            warn!("Failed to create transcode cache dir {:?}: {}", cache_dir, e);
+            warn!(
+                "Failed to create transcode cache dir {:?}: {}",
+                cache_dir, e
+            );
         }
 
         Self {
@@ -457,7 +466,11 @@ impl TranscodeSessionManager {
         *session.burn_resolved.write().await = burn_resolved;
         *session.last_accessed.write().await = Instant::now();
 
-        Self::watch_for_ready(session.clone(), session.output_dir.clone(), self.ffmpeg_path.clone());
+        Self::watch_for_ready(
+            session.clone(),
+            session.output_dir.clone(),
+            self.ffmpeg_path.clone(),
+        );
 
         info!(
             "Restarted transcode session {} seeking to {:.0}s",
@@ -529,11 +542,16 @@ impl TranscodeSessionManager {
                 // keyframe and nearest audio packet produces a noticeable
                 // "video starts, audio joins later" effect.
                 cmd.args([
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    "-ac", "2",
-                    "-af", audio_filter,
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-ac",
+                    "2",
+                    "-af",
+                    audio_filter,
                 ]);
             }
             TranscodeMode::FullTranscode => {
@@ -560,16 +578,26 @@ impl TranscodeSessionManager {
                     scale
                 };
                 cmd.args([
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "22",
-                    "-maxrate", bitrate,
-                    "-bufsize", bufsize,
-                    "-vf", &vf,
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    "-ac", "2",
-                    "-af", audio_filter,
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "fast",
+                    "-crf",
+                    "22",
+                    "-maxrate",
+                    bitrate,
+                    "-bufsize",
+                    bufsize,
+                    "-vf",
+                    &vf,
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-ac",
+                    "2",
+                    "-af",
+                    audio_filter,
                 ]);
             }
             TranscodeMode::Direct => unreachable!(),
@@ -629,15 +657,11 @@ impl TranscodeSessionManager {
                     let _ = session.ready_tx.send(true);
                     return;
                 }
-                if let Ok(content) =
-                    tokio::fs::read_to_string(output_dir.join("stream.m3u8")).await
+                if let Ok(content) = tokio::fs::read_to_string(output_dir.join("stream.m3u8")).await
                 {
                     if content.contains(".ts") {
                         let _ = session.ready_tx.send(true);
-                        debug!(
-                            "First HLS segment ready for session {}",
-                            session.session_id
-                        );
+                        debug!("First HLS segment ready for session {}", session.session_id);
                         return;
                     }
                 }
@@ -717,13 +741,16 @@ impl TranscodeSessionManager {
         for session in sessions.values() {
             let start_time = *session.start_time.read().await;
             let idle_seconds = session.last_accessed.read().await.elapsed().as_secs();
-            let burned_subtitle = session.burn_subtitle.as_ref().map(|b| BurnedSubtitleDisplay {
-                stream_id: b.stream_id,
-                language: b.language.clone(),
-                title: b.title.clone(),
-                is_forced: b.is_forced,
-                is_external: b.is_external,
-            });
+            let burned_subtitle = session
+                .burn_subtitle
+                .as_ref()
+                .map(|b| BurnedSubtitleDisplay {
+                    stream_id: b.stream_id,
+                    language: b.language.clone(),
+                    title: b.title.clone(),
+                    is_forced: b.is_forced,
+                    is_external: b.is_external,
+                });
             out.push(ActiveSessionInfo {
                 session_id: session.session_id.clone(),
                 user_id: session.user_id,
@@ -812,11 +839,22 @@ fn uuid_v4() -> String {
     let bytes: Vec<u8> = (0..16).map(|_| rand::rng().random::<u8>()).collect();
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        (bytes[6] & 0x0f) | 0x40, bytes[7],
-        (bytes[8] & 0x3f) | 0x80, bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        (bytes[6] & 0x0f) | 0x40,
+        bytes[7],
+        (bytes[8] & 0x3f) | 0x80,
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
     )
 }
 
@@ -906,14 +944,8 @@ mod tests {
         let mut second = stream("audio", "aac");
         second.id = 11;
         let streams = vec![stream("video", "h264"), first, second.clone()];
-        let mode = decide_transcode_mode(
-            &streams,
-            Some("mp4"),
-            &caps(),
-            Some(&second),
-            false,
-            false,
-        );
+        let mode =
+            decide_transcode_mode(&streams, Some("mp4"), &caps(), Some(&second), false, false);
         assert_eq!(mode, TranscodeMode::Remux);
     }
 

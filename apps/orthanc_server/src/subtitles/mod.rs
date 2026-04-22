@@ -7,7 +7,7 @@ pub mod languages;
 pub mod security;
 pub mod vtt;
 
-pub use classify::{classify, DeliveryMethod};
+pub use classify::{DeliveryMethod, classify};
 
 use crate::models::media_stream::MediaStream;
 use std::collections::HashMap;
@@ -128,7 +128,10 @@ impl SubtitleManager {
             if !src.exists() {
                 return Err(SubtitleError::StreamNotFound);
             }
-            (src.to_path_buf(), Some(format!("0:{}", stream.stream_index)))
+            (
+                src.to_path_buf(),
+                Some(format!("0:{}", stream.stream_index)),
+            )
         };
 
         // Extract via ffmpeg to a tmp file, then atomically rename.
@@ -137,31 +140,39 @@ impl SubtitleManager {
             .join(format!("{}.{}.tmp.vtt", stream.id, random_suffix()));
 
         let mut cmd = tokio::process::Command::new(&self.ffmpeg_path);
-        cmd.arg("-y")
-            .arg("-nostdin")
-            .arg("-i")
-            .arg(&input_path);
+        cmd.arg("-y").arg("-nostdin").arg("-i").arg(&input_path);
         if let Some(m) = &map_arg {
             cmd.arg("-map").arg(m);
         }
-        cmd.arg("-c:s").arg("webvtt").arg("-f").arg("webvtt").arg(&tmp_path);
+        cmd.arg("-c:s")
+            .arg("webvtt")
+            .arg("-f")
+            .arg("webvtt")
+            .arg(&tmp_path);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| SubtitleError::Ffmpeg(e.to_string()))?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| SubtitleError::Ffmpeg(e.to_string()))?;
         if !output.status.success() {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             return Err(SubtitleError::Ffmpeg(stderr));
         }
 
-        let meta = tokio::fs::metadata(&tmp_path).await.map_err(SubtitleError::from)?;
+        let meta = tokio::fs::metadata(&tmp_path)
+            .await
+            .map_err(SubtitleError::from)?;
         if meta.len() == 0 {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(SubtitleError::CacheEmpty);
         }
 
-        tokio::fs::rename(&tmp_path, &cache_path).await.map_err(SubtitleError::from)?;
+        tokio::fs::rename(&tmp_path, &cache_path)
+            .await
+            .map_err(SubtitleError::from)?;
         Ok(cache_path)
     }
 
@@ -220,7 +231,9 @@ impl SubtitleManager {
             }
         }
         // Fallback: copy. Required on platforms without symlink perms.
-        tokio::fs::copy(&src_path, &dest).await.map_err(SubtitleError::from)?;
+        tokio::fs::copy(&src_path, &dest)
+            .await
+            .map_err(SubtitleError::from)?;
         Ok(dest)
     }
 
@@ -242,7 +255,12 @@ mod tests {
     use crate::models::media_stream::MediaStream;
     use tempfile::tempdir;
 
-    fn make_stream(id: i64, codec: &str, is_external: bool, external_path: Option<&str>) -> MediaStream {
+    fn make_stream(
+        id: i64,
+        codec: &str,
+        is_external: bool,
+        external_path: Option<&str>,
+    ) -> MediaStream {
         MediaStream {
             id,
             media_item_id: 1,
@@ -324,7 +342,10 @@ mod tests {
         );
         let s = make_stream(5, "subrip", true, srt.to_str());
         let dest_dir = cache.path().join("burn_session");
-        let dest = mgr.prepare_for_burn(&s, "/ignored", &dest_dir).await.unwrap();
+        let dest = mgr
+            .prepare_for_burn(&s, "/ignored", &dest_dir)
+            .await
+            .unwrap();
         assert!(dest.starts_with(&dest_dir));
         assert!(dest.exists());
         // File name must have no filter-unsafe chars even if source path did.
@@ -365,12 +386,12 @@ mod tests {
         .unwrap();
 
         let s = make_stream(sid, "subrip", false, None);
-        let out = mgr
-            .vtt_with_offset(&s, "/video.mkv", 5.0)
-            .await
-            .unwrap();
+        let out = mgr.vtt_with_offset(&s, "/video.mkv", 5.0).await.unwrap();
         assert!(out.starts_with("WEBVTT"));
-        assert!(!out.contains("first"), "cue ending at 2 should be dropped when offset=5");
+        assert!(
+            !out.contains("first"),
+            "cue ending at 2 should be dropped when offset=5"
+        );
         assert!(out.contains("second"));
         assert!(out.contains("00:00:05.000 --> 00:00:07.000"));
     }

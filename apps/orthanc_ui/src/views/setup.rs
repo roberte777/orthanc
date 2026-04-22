@@ -1,9 +1,9 @@
-use dioxus::prelude::*;
 use crate::{
+    Route,
     api::{self, SetupRequest},
     state::{AuthState, save_auth},
-    Route,
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn Setup() -> Element {
@@ -32,9 +32,7 @@ pub fn Setup() -> Element {
             return;
         }
         if pass.len() < 8 {
-            error.set(Some(
-                "Password must be at least 8 characters".to_string(),
-            ));
+            error.set(Some("Password must be at least 8 characters".to_string()));
             return;
         }
 

@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::{
     api::{self, ActiveStreamRow},
     state::{AuthState, with_refresh},
 };
+use dioxus::prelude::*;
 
 const POLL_INTERVAL_MS: i32 = 3000;
 
@@ -42,7 +42,9 @@ pub fn AdminPlayback() -> Element {
         spawn(async move {
             match with_refresh(auth, |token| async move {
                 api::list_active_streams(&token).await
-            }).await {
+            })
+            .await
+            {
                 Ok(rows) => {
                     streams.set(rows);
                     error.set(None);
@@ -59,7 +61,9 @@ pub fn AdminPlayback() -> Element {
             loop {
                 match with_refresh(auth, |token| async move {
                     api::list_active_streams(&token).await
-                }).await {
+                })
+                .await
+                {
                     Ok(rows) => {
                         streams.set(rows);
                         error.set(None);

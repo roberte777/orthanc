@@ -5,8 +5,8 @@ pub mod tvdb;
 use crate::db::DbPool;
 use crate::models::media::MediaItem;
 use tmdb::TmdbClient;
+use tracing::{debug, info, warn};
 use tvdb::TvdbClient;
-use tracing::{info, warn, debug};
 
 /// Refresh mode controls how metadata is applied.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,7 +133,10 @@ pub async fn refresh_item(
                 break; // First successful provider wins
             }
             Ok(false) => {
-                debug!("Provider '{}' found no match for item {}, trying next", provider, item_id);
+                debug!(
+                    "Provider '{}' found no match for item {}, trying next",
+                    provider, item_id
+                );
                 continue;
             }
             Err(e) => {
@@ -191,12 +194,23 @@ async fn refresh_item_tmdb(
         "tv_show" => refresh_show(db, client, image_cache_dir, item, mode).await,
         "season" => {
             if let Some(parent_id) = item.parent_id {
-                let parent = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
-                    .bind(parent_id).fetch_optional(db).await?;
+                let parent =
+                    sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
+                        .bind(parent_id)
+                        .fetch_optional(db)
+                        .await?;
                 if let Some(parent) = parent {
                     if let Some(ref id_str) = parent.tmdb_id {
                         if let Ok(tmdb_id) = id_str.parse::<u64>() {
-                            return refresh_season(db, client, image_cache_dir, item, tmdb_id, mode).await;
+                            return refresh_season(
+                                db,
+                                client,
+                                image_cache_dir,
+                                item,
+                                tmdb_id,
+                                mode,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -205,17 +219,33 @@ async fn refresh_item_tmdb(
         }
         "episode" => {
             if let Some(season_id) = item.parent_id {
-                let season = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
-                    .bind(season_id).fetch_optional(db).await?;
+                let season =
+                    sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
+                        .bind(season_id)
+                        .fetch_optional(db)
+                        .await?;
                 if let Some(season) = season {
                     if let Some(show_id) = season.parent_id {
-                        let show = sqlx::query_as::<_, MediaItem>("SELECT * FROM media_items WHERE id = ?")
-                            .bind(show_id).fetch_optional(db).await?;
+                        let show = sqlx::query_as::<_, MediaItem>(
+                            "SELECT * FROM media_items WHERE id = ?",
+                        )
+                        .bind(show_id)
+                        .fetch_optional(db)
+                        .await?;
                         if let Some(show) = show {
                             if let Some(ref id_str) = show.tmdb_id {
                                 if let Ok(tmdb_id) = id_str.parse::<u64>() {
                                     let season_num = season.season_number.unwrap_or(1) as u32;
-                                    return refresh_episode(db, client, image_cache_dir, item, tmdb_id, season_num, mode).await;
+                                    return refresh_episode(
+                                        db,
+                                        client,
+                                        image_cache_dir,
+                                        item,
+                                        tmdb_id,
+                                        season_num,
+                                        mode,
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -325,7 +355,11 @@ async fn refresh_movie(
         Some(id) if mode == RefreshMode::Standard => id,
         _ => {
             // Search TMDB
-            let year = item.release_date.as_ref().and_then(|d| d.get(..4)).and_then(|y| y.parse().ok());
+            let year = item
+                .release_date
+                .as_ref()
+                .and_then(|d| d.get(..4))
+                .and_then(|y| y.parse().ok());
             let results = client.search_movie(&item.title, year).await?;
             match results.first() {
                 Some(r) => r.id,
@@ -340,20 +374,17 @@ async fn refresh_movie(
     let detail = client.movie_detail(tmdb_id).await?;
 
     // Get US content rating
-    let content_rating = detail
-        .content_ratings
-        .as_ref()
-        .and_then(|cr| {
-            cr.results
-                .iter()
-                .find(|r| r.iso_3166_1 == "US")
-                .and_then(|r| {
-                    r.release_dates
-                        .as_ref()
-                        .and_then(|rds| rds.iter().find_map(|rd| rd.certification.clone()))
-                        .or_else(|| r.rating.clone())
-                })
-        });
+    let content_rating = detail.content_ratings.as_ref().and_then(|cr| {
+        cr.results
+            .iter()
+            .find(|r| r.iso_3166_1 == "US")
+            .and_then(|r| {
+                r.release_dates
+                    .as_ref()
+                    .and_then(|rds| rds.iter().find_map(|rd| rd.certification.clone()))
+                    .or_else(|| r.rating.clone())
+            })
+    });
 
     if mode == RefreshMode::Full {
         // Wipe existing metadata
@@ -364,35 +395,56 @@ async fn refresh_movie(
         .execute(db)
         .await?;
         // Clear old images, genres, credits
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     // Update fields — in Standard mode, only fill NULLs
     if mode == RefreshMode::Full || item.description.is_none() {
         if let Some(ref overview) = detail.overview {
             sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                .bind(overview).bind(item.id).execute(db).await?;
+                .bind(overview)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.rating.is_none() {
         if let Some(rating) = detail.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                .bind(rating).bind(item.id).execute(db).await?;
+                .bind(rating)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.content_rating.is_none() {
         if let Some(ref cr) = content_rating {
             sqlx::query("UPDATE media_items SET content_rating = ? WHERE id = ?")
-                .bind(cr).bind(item.id).execute(db).await?;
+                .bind(cr)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.tagline.is_none() {
         if let Some(ref tagline) = detail.tagline {
             if !tagline.is_empty() {
                 sqlx::query("UPDATE media_items SET tagline = ? WHERE id = ?")
-                    .bind(tagline).bind(item.id).execute(db).await?;
+                    .bind(tagline)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -415,9 +467,21 @@ async fn refresh_movie(
     }
 
     // Images
-    save_images(db, client, image_cache_dir, item.id, detail.poster_path.as_deref(), detail.backdrop_path.as_deref(), mode).await?;
+    save_images(
+        db,
+        client,
+        image_cache_dir,
+        item.id,
+        detail.poster_path.as_deref(),
+        detail.backdrop_path.as_deref(),
+        mode,
+    )
+    .await?;
 
-    info!("Refreshed movie metadata: '{}' (tmdb:{})", item.title, tmdb_id);
+    info!(
+        "Refreshed movie metadata: '{}' (tmdb:{})",
+        item.title, tmdb_id
+    );
     Ok(true)
 }
 
@@ -439,7 +503,11 @@ async fn refresh_show(
     let tmdb_id = match tmdb_id {
         Some(id) if mode == RefreshMode::Standard => id,
         _ => {
-            let year = item.release_date.as_ref().and_then(|d| d.get(..4)).and_then(|y| y.parse().ok());
+            let year = item
+                .release_date
+                .as_ref()
+                .and_then(|d| d.get(..4))
+                .and_then(|y| y.parse().ok());
             let results = client.search_tv(&item.title, year).await?;
             match results.first() {
                 Some(r) => r.id,
@@ -453,50 +521,77 @@ async fn refresh_show(
 
     let detail = client.tv_detail(tmdb_id).await?;
 
-    let content_rating = detail
-        .content_ratings
-        .as_ref()
-        .and_then(|cr| cr.results.iter().find(|r| r.iso_3166_1 == "US").and_then(|r| r.rating.clone()));
+    let content_rating = detail.content_ratings.as_ref().and_then(|cr| {
+        cr.results
+            .iter()
+            .find(|r| r.iso_3166_1 == "US")
+            .and_then(|r| r.rating.clone())
+    });
 
     if mode == RefreshMode::Full {
         sqlx::query(
             "UPDATE media_items SET description = NULL, rating = NULL, content_rating = NULL, tagline = NULL, imdb_id = NULL, tmdb_id = NULL, tvdb_id = NULL WHERE id = ?",
         )
         .bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
         if let Some(ref overview) = detail.overview {
             sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                .bind(overview).bind(item.id).execute(db).await?;
+                .bind(overview)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.rating.is_none() {
         if let Some(rating) = detail.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                .bind(rating).bind(item.id).execute(db).await?;
+                .bind(rating)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.content_rating.is_none() {
         if let Some(ref cr) = content_rating {
             sqlx::query("UPDATE media_items SET content_rating = ? WHERE id = ?")
-                .bind(cr).bind(item.id).execute(db).await?;
+                .bind(cr)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
     if mode == RefreshMode::Full || item.tagline.is_none() {
         if let Some(ref tagline) = detail.tagline {
             if !tagline.is_empty() {
                 sqlx::query("UPDATE media_items SET tagline = ? WHERE id = ?")
-                    .bind(tagline).bind(item.id).execute(db).await?;
+                    .bind(tagline)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
 
     let imdb_id = detail.external_ids.as_ref().and_then(|e| e.imdb_id.clone());
-    let tvdb_id = detail.external_ids.as_ref().and_then(|e| e.tvdb_id).map(|id| id.to_string());
+    let tvdb_id = detail
+        .external_ids
+        .as_ref()
+        .and_then(|e| e.tvdb_id)
+        .map(|id| id.to_string());
 
     sqlx::query("UPDATE media_items SET tmdb_id = ?, imdb_id = COALESCE(imdb_id, ?), tvdb_id = COALESCE(tvdb_id, ?) WHERE id = ?")
         .bind(tmdb_id.to_string())
@@ -512,7 +607,16 @@ async fn refresh_show(
         save_credits(db, item.id, credits, mode).await?;
     }
 
-    save_images(db, client, image_cache_dir, item.id, detail.poster_path.as_deref(), detail.backdrop_path.as_deref(), mode).await?;
+    save_images(
+        db,
+        client,
+        image_cache_dir,
+        item.id,
+        detail.poster_path.as_deref(),
+        detail.backdrop_path.as_deref(),
+        mode,
+    )
+    .await?;
 
     // Now refresh seasons + episodes
     let local_seasons = sqlx::query_as::<_, MediaItem>(
@@ -528,7 +632,10 @@ async fn refresh_show(
         }
     }
 
-    info!("Refreshed TV show metadata: '{}' (tmdb:{})", item.title, tmdb_id);
+    info!(
+        "Refreshed TV show metadata: '{}' (tmdb:{})",
+        item.title, tmdb_id
+    );
     Ok(true)
 }
 
@@ -547,21 +654,36 @@ async fn refresh_season(
     let season_detail = match client.tv_season_detail(show_tmdb_id, season_num).await? {
         Some(d) => d,
         None => {
-            debug!("TMDB has no season {} for show {}", season_num, show_tmdb_id);
+            debug!(
+                "TMDB has no season {} for show {}",
+                season_num, show_tmdb_id
+            );
             return Ok(false);
         }
     };
 
     // Update season poster
     if let Some(ref poster) = season_detail.poster_path {
-        save_images(db, client, image_cache_dir, season_item.id, Some(poster), None, mode).await?;
+        save_images(
+            db,
+            client,
+            image_cache_dir,
+            season_item.id,
+            Some(poster),
+            None,
+            mode,
+        )
+        .await?;
     }
 
     if mode == RefreshMode::Full || season_item.description.is_none() {
         if let Some(ref overview) = season_detail.overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(overview).bind(season_item.id).execute(db).await?;
+                    .bind(overview)
+                    .bind(season_item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -576,7 +698,11 @@ async fn refresh_season(
 
     for ep_item in &local_episodes {
         let ep_num = ep_item.episode_number.unwrap_or(0) as u32;
-        if let Some(tmdb_ep) = season_detail.episodes.iter().find(|e| e.episode_number == ep_num) {
+        if let Some(tmdb_ep) = season_detail
+            .episodes
+            .iter()
+            .find(|e| e.episode_number == ep_num)
+        {
             update_episode_from_tmdb(db, client, image_cache_dir, ep_item, tmdb_ep, mode).await?;
         }
         generate_video_thumbnail(db, image_cache_dir, ep_item).await;
@@ -599,7 +725,11 @@ async fn refresh_episode(
     let ep_num = ep_item.episode_number.unwrap_or(0) as u32;
 
     if let Some(season_detail) = client.tv_season_detail(show_tmdb_id, season_num).await? {
-        if let Some(tmdb_ep) = season_detail.episodes.iter().find(|e| e.episode_number == ep_num) {
+        if let Some(tmdb_ep) = season_detail
+            .episodes
+            .iter()
+            .find(|e| e.episode_number == ep_num)
+        {
             update_episode_from_tmdb(db, client, image_cache_dir, ep_item, tmdb_ep, mode).await?;
             return Ok(true);
         }
@@ -631,8 +761,13 @@ async fn refresh_show_anidb(
 
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
-            .bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
@@ -640,7 +775,10 @@ async fn refresh_show_anidb(
             let cleaned = anidb::clean_description(desc);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(&cleaned).bind(item.id).execute(db).await?;
+                    .bind(&cleaned)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -651,7 +789,10 @@ async fn refresh_show_anidb(
                 if let Some(ref val) = perm.value {
                     if let Ok(r) = val.parse::<f64>() {
                         sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                            .bind(r).bind(item.id).execute(db).await?;
+                            .bind(r)
+                            .bind(item.id)
+                            .execute(db)
+                            .await?;
                     }
                 }
             }
@@ -660,14 +801,36 @@ async fn refresh_show_anidb(
 
     // Poster
     if let Some(ref picture) = detail.picture {
-        save_anidb_image(db, client, image_cache_dir, item.id, picture, "poster", mode).await?;
+        save_anidb_image(
+            db,
+            client,
+            image_cache_dir,
+            item.id,
+            picture,
+            "poster",
+            mode,
+        )
+        .await?;
     }
 
     // Tags as genres
     if let Some(ref tags) = detail.tags {
-        let genre_tags: Vec<tmdb::Genre> = tags.tags.iter()
-            .filter(|t| t.weight.as_ref().and_then(|w| w.parse::<u32>().ok()).unwrap_or(0) >= 200)
-            .filter_map(|t| t.name.as_ref().map(|n| tmdb::Genre { id: 0, name: n.clone() }))
+        let genre_tags: Vec<tmdb::Genre> = tags
+            .tags
+            .iter()
+            .filter(|t| {
+                t.weight
+                    .as_ref()
+                    .and_then(|w| w.parse::<u32>().ok())
+                    .unwrap_or(0)
+                    >= 200
+            })
+            .filter_map(|t| {
+                t.name.as_ref().map(|n| tmdb::Genre {
+                    id: 0,
+                    name: n.clone(),
+                })
+            })
             .take(10)
             .collect();
         if !genre_tags.is_empty() {
@@ -694,7 +857,11 @@ async fn refresh_show_anidb(
 
             for ep_item in &local_episodes {
                 let ep_num = ep_item.episode_number.unwrap_or(0) as u32;
-                if let Some(anidb_ep) = episodes.episodes.iter().find(|e| e.regular_episode_number() == Some(ep_num)) {
+                if let Some(anidb_ep) = episodes
+                    .episodes
+                    .iter()
+                    .find(|e| e.regular_episode_number() == Some(ep_num))
+                {
                     update_episode_from_anidb(db, ep_item, anidb_ep, mode).await?;
                 }
                 generate_video_thumbnail(db, image_cache_dir, ep_item).await;
@@ -702,7 +869,10 @@ async fn refresh_show_anidb(
         }
     }
 
-    info!("Refreshed TV show metadata from AniDB: '{}' (aid:{})", item.title, aid);
+    info!(
+        "Refreshed TV show metadata from AniDB: '{}' (aid:{})",
+        item.title, aid
+    );
     Ok(true)
 }
 
@@ -723,8 +893,13 @@ async fn refresh_movie_anidb(
 
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
-            .bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
@@ -732,7 +907,10 @@ async fn refresh_movie_anidb(
             let cleaned = anidb::clean_description(desc);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(&cleaned).bind(item.id).execute(db).await?;
+                    .bind(&cleaned)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -743,7 +921,10 @@ async fn refresh_movie_anidb(
                 if let Some(ref val) = perm.value {
                     if let Ok(r) = val.parse::<f64>() {
                         sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                            .bind(r).bind(item.id).execute(db).await?;
+                            .bind(r)
+                            .bind(item.id)
+                            .execute(db)
+                            .await?;
                     }
                 }
             }
@@ -751,10 +932,22 @@ async fn refresh_movie_anidb(
     }
 
     if let Some(ref picture) = detail.picture {
-        save_anidb_image(db, client, image_cache_dir, item.id, picture, "poster", mode).await?;
+        save_anidb_image(
+            db,
+            client,
+            image_cache_dir,
+            item.id,
+            picture,
+            "poster",
+            mode,
+        )
+        .await?;
     }
 
-    info!("Refreshed movie metadata from AniDB: '{}' (aid:{})", item.title, aid);
+    info!(
+        "Refreshed movie metadata from AniDB: '{}' (aid:{})",
+        item.title, aid
+    );
     Ok(true)
 }
 
@@ -765,10 +958,16 @@ async fn update_episode_from_anidb(
     mode: RefreshMode,
 ) -> Result<(), anyhow::Error> {
     if mode == RefreshMode::Full {
-        sqlx::query("UPDATE media_items SET description = NULL, duration_seconds = NULL WHERE id = ?")
-            .bind(ep_item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET description = NULL, duration_seconds = NULL WHERE id = ?",
+        )
+        .bind(ep_item.id)
+        .execute(db)
+        .await?;
         sqlx::query("DELETE FROM images WHERE media_item_id = ?")
-            .bind(ep_item.id).execute(db).await?;
+            .bind(ep_item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || ep_item.description.is_none() {
@@ -776,7 +975,10 @@ async fn update_episode_from_anidb(
             let cleaned = anidb::clean_description(summary);
             if !cleaned.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(&cleaned).bind(ep_item.id).execute(db).await?;
+                    .bind(&cleaned)
+                    .bind(ep_item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -785,13 +987,21 @@ async fn update_episode_from_anidb(
         // Only override title if it looks like a generic "Episode X" title
         if ep_item.title.starts_with("Episode ") {
             sqlx::query("UPDATE media_items SET title = ? WHERE id = ?")
-                .bind(title).bind(ep_item.id).execute(db).await?;
+                .bind(title)
+                .bind(ep_item.id)
+                .execute(db)
+                .await?;
         }
     }
 
     if let Some(runtime) = anidb_ep.runtime_seconds() {
-        sqlx::query("UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?")
-            .bind(runtime).bind(ep_item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?",
+        )
+        .bind(runtime)
+        .bind(ep_item.id)
+        .execute(db)
+        .await?;
     }
 
     Ok(())
@@ -810,8 +1020,13 @@ async fn save_anidb_image(
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM images WHERE media_item_id = ? AND image_type = ?",
         )
-        .bind(media_id).bind(image_type).fetch_one(db).await?;
-        if count > 0 { return Ok(()); }
+        .bind(media_id)
+        .bind(image_type)
+        .fetch_one(db)
+        .await?;
+        if count > 0 {
+            return Ok(());
+        }
     }
 
     let bytes = match client.download_image(picture).await {
@@ -832,7 +1047,10 @@ async fn save_anidb_image(
     tokio::fs::write(&local_path, &bytes).await?;
 
     sqlx::query("DELETE FROM images WHERE media_item_id = ? AND image_type = ?")
-        .bind(media_id).bind(image_type).execute(db).await?;
+        .bind(media_id)
+        .bind(image_type)
+        .execute(db)
+        .await?;
 
     let url = anidb::AnidbClient::image_url(picture);
     sqlx::query(
@@ -859,7 +1077,9 @@ async fn refresh_show_tvdb(
         Some(id) if mode == RefreshMode::Standard => id,
         _ => {
             let results = client.search_series(&item.title).await?;
-            let parsed = results.iter().find_map(|r| r.tvdb_id.as_ref()?.parse::<u64>().ok());
+            let parsed = results
+                .iter()
+                .find_map(|r| r.tvdb_id.as_ref()?.parse::<u64>().ok());
             match parsed {
                 Some(id) => id,
                 None => {
@@ -883,20 +1103,32 @@ async fn refresh_show_tvdb(
 
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
-            .bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
         // Prefer English translation, fall back to original overview.
-        let overview = translation.as_ref()
+        let overview = translation
+            .as_ref()
             .and_then(|t| t.overview.as_deref())
             .or(detail.overview.as_deref());
         if let Some(overview) = overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(overview).bind(item.id).execute(db).await?;
+                    .bind(overview)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -904,27 +1136,44 @@ async fn refresh_show_tvdb(
     if mode == RefreshMode::Full || item.rating.is_none() {
         if let Some(score) = detail.score {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                .bind(score).bind(item.id).execute(db).await?;
+                .bind(score)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
 
     sqlx::query("UPDATE media_items SET tvdb_id = ? WHERE id = ?")
-        .bind(tvdb_id.to_string()).bind(item.id).execute(db).await?;
+        .bind(tvdb_id.to_string())
+        .bind(item.id)
+        .execute(db)
+        .await?;
 
     // Genres
-    let genre_list: Vec<tmdb::Genre> = detail.genres.iter()
-        .filter_map(|g| g.name.as_ref().map(|n| tmdb::Genre { id: 0, name: n.clone() }))
+    let genre_list: Vec<tmdb::Genre> = detail
+        .genres
+        .iter()
+        .filter_map(|g| {
+            g.name.as_ref().map(|n| tmdb::Genre {
+                id: 0,
+                name: n.clone(),
+            })
+        })
         .collect();
     if !genre_list.is_empty() {
         save_genres(db, item.id, &genre_list, mode).await?;
     }
 
     // Poster (TVDB artwork type 2 = series poster) and background (type 3)
-    let poster = detail.artworks.iter()
+    let poster = detail
+        .artworks
+        .iter()
         .find(|a| a.art_type == Some(2))
         .and_then(|a| a.image.as_deref())
         .or(detail.image.as_deref());
-    let backdrop = detail.artworks.iter()
+    let backdrop = detail
+        .artworks
+        .iter()
         .find(|a| a.art_type == Some(3))
         .and_then(|a| a.image.as_deref());
 
@@ -946,11 +1195,19 @@ async fn refresh_show_tvdb(
     for season_item in &local_seasons {
         let season_num = season_item.season_number.unwrap_or(0) as u32;
         if let Some(tvdb_season) = detail.seasons.iter().find(|s| {
-            s.number == Some(season_num)
-                && s.season_type.as_ref().and_then(|t| t.id) == Some(1)
+            s.number == Some(season_num) && s.season_type.as_ref().and_then(|t| t.id) == Some(1)
         }) {
             if let Some(ref img) = tvdb_season.image {
-                save_tvdb_image(db, client, image_cache_dir, season_item.id, img, "poster", mode).await?;
+                save_tvdb_image(
+                    db,
+                    client,
+                    image_cache_dir,
+                    season_item.id,
+                    img,
+                    "poster",
+                    mode,
+                )
+                .await?;
             }
         }
     }
@@ -968,16 +1225,22 @@ async fn refresh_show_tvdb(
 
         for ep_item in &local_episodes {
             let ep_num = ep_item.episode_number.unwrap_or(0) as u32;
-            if let Some(tvdb_ep) = episodes.episodes.iter().find(|e| {
-                e.season_number == Some(season_num) && e.number == Some(ep_num)
-            }) {
-                update_episode_from_tvdb(db, client, image_cache_dir, ep_item, tvdb_ep, mode).await?;
+            if let Some(tvdb_ep) = episodes
+                .episodes
+                .iter()
+                .find(|e| e.season_number == Some(season_num) && e.number == Some(ep_num))
+            {
+                update_episode_from_tvdb(db, client, image_cache_dir, ep_item, tvdb_ep, mode)
+                    .await?;
             }
             generate_video_thumbnail(db, image_cache_dir, ep_item).await;
         }
     }
 
-    info!("Refreshed TV show metadata from TVDB: '{}' (tvdb:{})", item.title, tvdb_id);
+    info!(
+        "Refreshed TV show metadata from TVDB: '{}' (tvdb:{})",
+        item.title, tvdb_id
+    );
     Ok(true)
 }
 
@@ -989,7 +1252,10 @@ async fn refresh_movie_tvdb(
     mode: RefreshMode,
 ) -> Result<bool, anyhow::Error> {
     let results = client.search_movie(&item.title).await?;
-    let tvdb_id = match results.iter().find_map(|r| r.tvdb_id.as_ref()?.parse::<u64>().ok()) {
+    let tvdb_id = match results
+        .iter()
+        .find_map(|r| r.tvdb_id.as_ref()?.parse::<u64>().ok())
+    {
         Some(id) => id,
         None => {
             debug!("No TVDB results for movie '{}'", item.title);
@@ -1010,19 +1276,31 @@ async fn refresh_movie_tvdb(
 
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL WHERE id = ?")
-            .bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(item.id).execute(db).await?;
-        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?").bind(item.id).execute(db).await?;
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
+        sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?")
+            .bind(item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || item.description.is_none() {
-        let overview = translation.as_ref()
+        let overview = translation
+            .as_ref()
             .and_then(|t| t.overview.as_deref())
             .or(detail.overview.as_deref());
         if let Some(overview) = overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(overview).bind(item.id).execute(db).await?;
+                    .bind(overview)
+                    .bind(item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -1030,30 +1308,52 @@ async fn refresh_movie_tvdb(
     if mode == RefreshMode::Full || item.rating.is_none() {
         if let Some(score) = detail.score {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                .bind(score).bind(item.id).execute(db).await?;
+                .bind(score)
+                .bind(item.id)
+                .execute(db)
+                .await?;
         }
     }
 
     if let Some(runtime) = detail.runtime {
-        sqlx::query("UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?")
-            .bind((runtime * 60) as i64).bind(item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?",
+        )
+        .bind((runtime * 60) as i64)
+        .bind(item.id)
+        .execute(db)
+        .await?;
     }
 
     sqlx::query("UPDATE media_items SET tvdb_id = ? WHERE id = ?")
-        .bind(tvdb_id.to_string()).bind(item.id).execute(db).await?;
+        .bind(tvdb_id.to_string())
+        .bind(item.id)
+        .execute(db)
+        .await?;
 
-    let genre_list: Vec<tmdb::Genre> = detail.genres.iter()
-        .filter_map(|g| g.name.as_ref().map(|n| tmdb::Genre { id: 0, name: n.clone() }))
+    let genre_list: Vec<tmdb::Genre> = detail
+        .genres
+        .iter()
+        .filter_map(|g| {
+            g.name.as_ref().map(|n| tmdb::Genre {
+                id: 0,
+                name: n.clone(),
+            })
+        })
         .collect();
     if !genre_list.is_empty() {
         save_genres(db, item.id, &genre_list, mode).await?;
     }
 
-    let poster = detail.artworks.iter()
+    let poster = detail
+        .artworks
+        .iter()
         .find(|a| a.art_type == Some(14))
         .and_then(|a| a.image.as_deref())
         .or(detail.image.as_deref());
-    let backdrop = detail.artworks.iter()
+    let backdrop = detail
+        .artworks
+        .iter()
         .find(|a| a.art_type == Some(15))
         .and_then(|a| a.image.as_deref());
 
@@ -1064,7 +1364,10 @@ async fn refresh_movie_tvdb(
         save_tvdb_image(db, client, image_cache_dir, item.id, url, "backdrop", mode).await?;
     }
 
-    info!("Refreshed movie metadata from TVDB: '{}' (tvdb:{})", item.title, tvdb_id);
+    info!(
+        "Refreshed movie metadata from TVDB: '{}' (tvdb:{})",
+        item.title, tvdb_id
+    );
     Ok(true)
 }
 
@@ -1077,17 +1380,26 @@ async fn update_episode_from_tvdb(
     mode: RefreshMode,
 ) -> Result<(), anyhow::Error> {
     if mode == RefreshMode::Full {
-        sqlx::query("UPDATE media_items SET description = NULL, duration_seconds = NULL WHERE id = ?")
-            .bind(ep_item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET description = NULL, duration_seconds = NULL WHERE id = ?",
+        )
+        .bind(ep_item.id)
+        .execute(db)
+        .await?;
         sqlx::query("DELETE FROM images WHERE media_item_id = ?")
-            .bind(ep_item.id).execute(db).await?;
+            .bind(ep_item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || ep_item.description.is_none() {
         if let Some(ref overview) = tvdb_ep.overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(overview).bind(ep_item.id).execute(db).await?;
+                    .bind(overview)
+                    .bind(ep_item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -1095,17 +1407,34 @@ async fn update_episode_from_tvdb(
     if let Some(ref name) = tvdb_ep.name {
         if !name.is_empty() && ep_item.title.starts_with("Episode ") {
             sqlx::query("UPDATE media_items SET title = ? WHERE id = ?")
-                .bind(name).bind(ep_item.id).execute(db).await?;
+                .bind(name)
+                .bind(ep_item.id)
+                .execute(db)
+                .await?;
         }
     }
 
     if let Some(runtime) = tvdb_ep.runtime {
-        sqlx::query("UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?")
-            .bind((runtime * 60) as i64).bind(ep_item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?",
+        )
+        .bind((runtime * 60) as i64)
+        .bind(ep_item.id)
+        .execute(db)
+        .await?;
     }
 
     if let Some(ref img) = tvdb_ep.image {
-        save_tvdb_image(db, client, image_cache_dir, ep_item.id, img, "thumbnail", mode).await?;
+        save_tvdb_image(
+            db,
+            client,
+            image_cache_dir,
+            ep_item.id,
+            img,
+            "thumbnail",
+            mode,
+        )
+        .await?;
     }
 
     Ok(())
@@ -1124,8 +1453,13 @@ async fn save_tvdb_image(
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM images WHERE media_item_id = ? AND image_type = ?",
         )
-        .bind(media_id).bind(image_type).fetch_one(db).await?;
-        if count > 0 { return Ok(()); }
+        .bind(media_id)
+        .bind(image_type)
+        .fetch_one(db)
+        .await?;
+        if count > 0 {
+            return Ok(());
+        }
     }
 
     let bytes = match client.download_image(url).await {
@@ -1146,7 +1480,10 @@ async fn save_tvdb_image(
     tokio::fs::write(&local_path, &bytes).await?;
 
     sqlx::query("DELETE FROM images WHERE media_item_id = ? AND image_type = ?")
-        .bind(media_id).bind(image_type).execute(db).await?;
+        .bind(media_id)
+        .bind(image_type)
+        .execute(db)
+        .await?;
 
     sqlx::query(
         "INSERT INTO images (media_item_id, image_type, url, file_path, is_primary) VALUES (?, ?, ?, ?, 1)",
@@ -1170,14 +1507,20 @@ async fn update_episode_from_tmdb(
     if mode == RefreshMode::Full {
         sqlx::query("UPDATE media_items SET description = NULL, rating = NULL, duration_seconds = NULL WHERE id = ?")
             .bind(ep_item.id).execute(db).await?;
-        sqlx::query("DELETE FROM images WHERE media_item_id = ?").bind(ep_item.id).execute(db).await?;
+        sqlx::query("DELETE FROM images WHERE media_item_id = ?")
+            .bind(ep_item.id)
+            .execute(db)
+            .await?;
     }
 
     if mode == RefreshMode::Full || ep_item.description.is_none() {
         if let Some(ref overview) = tmdb_ep.overview {
             if !overview.is_empty() {
                 sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-                    .bind(overview).bind(ep_item.id).execute(db).await?;
+                    .bind(overview)
+                    .bind(ep_item.id)
+                    .execute(db)
+                    .await?;
             }
         }
     }
@@ -1185,18 +1528,35 @@ async fn update_episode_from_tmdb(
     if mode == RefreshMode::Full || ep_item.rating.is_none() {
         if let Some(rating) = tmdb_ep.vote_average {
             sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-                .bind(rating).bind(ep_item.id).execute(db).await?;
+                .bind(rating)
+                .bind(ep_item.id)
+                .execute(db)
+                .await?;
         }
     }
 
     if let Some(runtime) = tmdb_ep.runtime {
-        sqlx::query("UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?")
-            .bind(runtime * 60).bind(ep_item.id).execute(db).await?;
+        sqlx::query(
+            "UPDATE media_items SET duration_seconds = COALESCE(duration_seconds, ?) WHERE id = ?",
+        )
+        .bind(runtime * 60)
+        .bind(ep_item.id)
+        .execute(db)
+        .await?;
     }
 
     // Episode thumbnail
     if let Some(ref still) = tmdb_ep.still_path {
-        save_images(db, client, image_cache_dir, ep_item.id, None, Some(still.as_str()), mode).await?;
+        save_images(
+            db,
+            client,
+            image_cache_dir,
+            ep_item.id,
+            None,
+            Some(still.as_str()),
+            mode,
+        )
+        .await?;
     }
 
     Ok(())
@@ -1239,9 +1599,12 @@ async fn generate_video_thumbnail(db: &DbPool, cache_dir: &str, item: &MediaItem
     // Get video duration with ffprobe, then seek to 10% (same as Jellyfin)
     let seek_seconds = match tokio::process::Command::new(&ffprobe)
         .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             file_path,
         ])
         .output()
@@ -1249,7 +1612,11 @@ async fn generate_video_thumbnail(db: &DbPool, cache_dir: &str, item: &MediaItem
     {
         Ok(output) => {
             let s = String::from_utf8_lossy(&output.stdout);
-            s.trim().parse::<f64>().ok().map(|d| (d * 0.1) as u64).unwrap_or(30)
+            s.trim()
+                .parse::<f64>()
+                .ok()
+                .map(|d| (d * 0.1) as u64)
+                .unwrap_or(30)
         }
         Err(_) => 30,
     };
@@ -1257,11 +1624,16 @@ async fn generate_video_thumbnail(db: &DbPool, cache_dir: &str, item: &MediaItem
     let seek_str = seek_seconds.to_string();
     let result = tokio::process::Command::new(&ffmpeg)
         .args([
-            "-ss", &seek_str,
-            "-i", file_path,
-            "-vframes", "1",
-            "-q:v", "5",
-            "-vf", "scale=320:-1",
+            "-ss",
+            &seek_str,
+            "-i",
+            file_path,
+            "-vframes",
+            "1",
+            "-q:v",
+            "5",
+            "-vf",
+            "scale=320:-1",
             "-y",
             &output_path,
         ])
@@ -1302,21 +1674,36 @@ async fn save_genres(
 ) -> Result<(), anyhow::Error> {
     if mode == RefreshMode::Standard {
         // Check if already has genres
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM media_genres WHERE media_item_id = ?")
-            .bind(media_id).fetch_one(db).await?;
-        if count > 0 { return Ok(()); }
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM media_genres WHERE media_item_id = ?")
+                .bind(media_id)
+                .fetch_one(db)
+                .await?;
+        if count > 0 {
+            return Ok(());
+        }
     }
 
-    sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?").bind(media_id).execute(db).await?;
+    sqlx::query("DELETE FROM media_genres WHERE media_item_id = ?")
+        .bind(media_id)
+        .execute(db)
+        .await?;
 
     for genre in genres {
         // Upsert genre
         sqlx::query("INSERT OR IGNORE INTO genres (name) VALUES (?)")
-            .bind(&genre.name).execute(db).await?;
+            .bind(&genre.name)
+            .execute(db)
+            .await?;
         let (genre_id,): (i64,) = sqlx::query_as("SELECT id FROM genres WHERE name = ?")
-            .bind(&genre.name).fetch_one(db).await?;
+            .bind(&genre.name)
+            .fetch_one(db)
+            .await?;
         sqlx::query("INSERT OR IGNORE INTO media_genres (media_item_id, genre_id) VALUES (?, ?)")
-            .bind(media_id).bind(genre_id).execute(db).await?;
+            .bind(media_id)
+            .bind(genre_id)
+            .execute(db)
+            .await?;
     }
     Ok(())
 }
@@ -1328,12 +1715,20 @@ async fn save_credits(
     mode: RefreshMode,
 ) -> Result<(), anyhow::Error> {
     if mode == RefreshMode::Standard {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM media_credits WHERE media_item_id = ?")
-            .bind(media_id).fetch_one(db).await?;
-        if count > 0 { return Ok(()); }
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM media_credits WHERE media_item_id = ?")
+                .bind(media_id)
+                .fetch_one(db)
+                .await?;
+        if count > 0 {
+            return Ok(());
+        }
     }
 
-    sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?").bind(media_id).execute(db).await?;
+    sqlx::query("DELETE FROM media_credits WHERE media_item_id = ?")
+        .bind(media_id)
+        .execute(db)
+        .await?;
 
     // Top 20 cast
     for member in credits.cast.iter().take(20) {
@@ -1375,11 +1770,18 @@ async fn save_credits(
 async fn upsert_person(db: &DbPool, tmdb_id: u64, name: &str) -> Result<i64, anyhow::Error> {
     let tmdb_str = tmdb_id.to_string();
     let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM people WHERE tmdb_id = ?")
-        .bind(&tmdb_str).fetch_optional(db).await?;
-    if let Some((id,)) = existing { return Ok(id); }
+        .bind(&tmdb_str)
+        .fetch_optional(db)
+        .await?;
+    if let Some((id,)) = existing {
+        return Ok(id);
+    }
 
     let result = sqlx::query("INSERT INTO people (name, tmdb_id) VALUES (?, ?)")
-        .bind(name).bind(&tmdb_str).execute(db).await?;
+        .bind(name)
+        .bind(&tmdb_str)
+        .execute(db)
+        .await?;
     Ok(result.last_insert_rowid())
 }
 
@@ -1393,10 +1795,16 @@ async fn save_images(
     mode: RefreshMode,
 ) -> Result<(), anyhow::Error> {
     if let Some(path) = poster_path {
-        save_single_image(db, client, cache_dir, media_id, path, "poster", "w500", mode).await?;
+        save_single_image(
+            db, client, cache_dir, media_id, path, "poster", "w500", mode,
+        )
+        .await?;
     }
     if let Some(path) = backdrop_path {
-        save_single_image(db, client, cache_dir, media_id, path, "backdrop", "w1280", mode).await?;
+        save_single_image(
+            db, client, cache_dir, media_id, path, "backdrop", "w1280", mode,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1416,8 +1824,13 @@ async fn save_single_image(
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM images WHERE media_item_id = ? AND image_type = ?",
         )
-        .bind(media_id).bind(image_type).fetch_one(db).await?;
-        if count > 0 { return Ok(()); }
+        .bind(media_id)
+        .bind(image_type)
+        .fetch_one(db)
+        .await?;
+        if count > 0 {
+            return Ok(());
+        }
     }
 
     // Download image
@@ -1443,7 +1856,10 @@ async fn save_single_image(
 
     // Remove old image of same type
     sqlx::query("DELETE FROM images WHERE media_item_id = ? AND image_type = ?")
-        .bind(media_id).bind(image_type).execute(db).await?;
+        .bind(media_id)
+        .bind(image_type)
+        .execute(db)
+        .await?;
 
     // Insert image record
     let url = TmdbClient::image_url(tmdb_path, "original");

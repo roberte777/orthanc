@@ -139,13 +139,18 @@ fn parse_timestamp(s: &str) -> Option<f64> {
     };
     let parts: Vec<&str> = hms.split(':').collect();
     let (h, m, s_int) = match parts.as_slice() {
-        [h, m, s] => (h.parse::<u64>().ok()?, m.parse::<u64>().ok()?, s.parse::<u64>().ok()?),
+        [h, m, s] => (
+            h.parse::<u64>().ok()?,
+            m.parse::<u64>().ok()?,
+            s.parse::<u64>().ok()?,
+        ),
         [m, s] => (0u64, m.parse::<u64>().ok()?, s.parse::<u64>().ok()?),
         _ => return None,
     };
     let ms: u64 = frac.parse().ok()?;
     let ms_scale = 10u64.pow(frac.len() as u32).max(1);
-    let seconds = h as f64 * 3600.0 + m as f64 * 60.0 + s_int as f64 + (ms as f64 / ms_scale as f64);
+    let seconds =
+        h as f64 * 3600.0 + m as f64 * 60.0 + s_int as f64 + (ms as f64 / ms_scale as f64);
     Some(seconds)
 }
 
@@ -213,7 +218,10 @@ Later cue
     #[test]
     fn positive_offset_shifts_backward_and_drops_early_cues() {
         let out = shift_vtt(SAMPLE, 3.0);
-        assert!(!out.contains("Hello world"), "cue ending at 2.5s should be dropped when offset=3");
+        assert!(
+            !out.contains("Hello world"),
+            "cue ending at 2.5s should be dropped when offset=3"
+        );
         assert!(out.contains("Second cue"));
         // start 5.0 - 3 = 2.0, end 6.0 - 3 = 3.0
         assert!(out.contains("00:00:02.000 --> 00:00:03.000"));
@@ -239,7 +247,8 @@ Later cue
 
     #[test]
     fn preserves_note_blocks() {
-        let with_note = "WEBVTT\n\nNOTE\nThis is a note\n\n1\n00:00:01.000 --> 00:00:02.000\nCue text\n";
+        let with_note =
+            "WEBVTT\n\nNOTE\nThis is a note\n\n1\n00:00:01.000 --> 00:00:02.000\nCue text\n";
         let out = shift_vtt(with_note, 0.0);
         assert!(out.contains("NOTE"));
         assert!(out.contains("This is a note"));

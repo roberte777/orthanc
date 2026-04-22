@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::{
     api::{self, ChangePasswordRequest, UpdateProfileRequest, UserPreferences},
     state::{self, AuthState, with_refresh},
 };
+use dioxus::prelude::*;
 
 #[derive(Clone, PartialEq)]
 enum SettingsTab {
@@ -75,9 +75,7 @@ fn ProfileSection() -> Element {
             .and_then(|u| u.display_name.clone())
             .unwrap_or_default()
     });
-    let mut email = use_signal(|| {
-        user.as_ref().map(|u| u.email.clone()).unwrap_or_default()
-    });
+    let mut email = use_signal(|| user.as_ref().map(|u| u.email.clone()).unwrap_or_default());
     let mut message = use_signal(|| Option::<(bool, String)>::None);
     let mut loading = use_signal(|| false);
 
@@ -174,10 +172,7 @@ fn PasswordSection() -> Element {
                     current.set(String::new());
                     new_pass.set(String::new());
                     confirm.set(String::new());
-                    message.set(Some((
-                        true,
-                        "Password changed successfully".to_string(),
-                    )));
+                    message.set(Some((true, "Password changed successfully".to_string())));
                 }
                 Err(e) => {
                     message.set(Some((false, format!("Error: {}", e))));

@@ -7,9 +7,9 @@ use crate::{
     metadata::{self, RefreshMode, RefreshResult},
 };
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::{post, put},
-    Json, Router,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -50,10 +50,9 @@ async fn refresh_item(
     Path(id): Path<i64>,
     Json(req): Json<RefreshRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let api_key = state
-        .tmdb_api_key
-        .as_ref()
-        .ok_or(ApiError::BadRequest("TMDB_API_KEY not configured".to_string()))?;
+    let api_key = state.tmdb_api_key.as_ref().ok_or(ApiError::BadRequest(
+        "TMDB_API_KEY not configured".to_string(),
+    ))?;
 
     metadata::refresh_item(
         &state.db,
@@ -75,10 +74,9 @@ async fn refresh_library(
     Path(id): Path<i64>,
     Json(req): Json<RefreshRequest>,
 ) -> ApiResult<Json<RefreshResult>> {
-    let api_key = state
-        .tmdb_api_key
-        .as_ref()
-        .ok_or(ApiError::BadRequest("TMDB_API_KEY not configured".to_string()))?;
+    let api_key = state.tmdb_api_key.as_ref().ok_or(ApiError::BadRequest(
+        "TMDB_API_KEY not configured".to_string(),
+    ))?;
 
     let result = metadata::refresh_library(
         &state.db,
@@ -111,12 +109,11 @@ async fn override_metadata(
     Json(req): Json<MetadataOverride>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Verify item exists
-    let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM media_items WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(anyhow::Error::from)?;
+    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM media_items WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(anyhow::Error::from)?;
 
     if existing.is_none() {
         return Err(ApiError::NotFound("Media item not found".to_string()));
@@ -124,27 +121,51 @@ async fn override_metadata(
 
     if let Some(ref title) = req.title {
         sqlx::query("UPDATE media_items SET title = ? WHERE id = ?")
-            .bind(title).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(title)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     if let Some(ref desc) = req.description {
         sqlx::query("UPDATE media_items SET description = ? WHERE id = ?")
-            .bind(desc).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(desc)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     if let Some(rating) = req.rating {
         sqlx::query("UPDATE media_items SET rating = ? WHERE id = ?")
-            .bind(rating).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(rating)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     if let Some(ref cr) = req.content_rating {
         sqlx::query("UPDATE media_items SET content_rating = ? WHERE id = ?")
-            .bind(cr).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(cr)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     if let Some(ref tagline) = req.tagline {
         sqlx::query("UPDATE media_items SET tagline = ? WHERE id = ?")
-            .bind(tagline).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(tagline)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     if let Some(ref rd) = req.release_date {
         sqlx::query("UPDATE media_items SET release_date = ? WHERE id = ?")
-            .bind(rd).bind(id).execute(&state.db).await.map_err(anyhow::Error::from)?;
+            .bind(rd)
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
 
     Ok(Json(serde_json::json!({"message": "Metadata updated"})))

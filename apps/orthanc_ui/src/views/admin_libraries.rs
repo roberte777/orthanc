@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::{
     api::{self, CreateLibraryRequest, LibraryResponse, UpdateLibraryRequest},
     state::{AuthState, with_refresh},
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn AdminLibraries() -> Element {
@@ -23,9 +23,12 @@ pub fn AdminLibraries() -> Element {
     let load_libraries = move || {
         loading.set(true);
         spawn(async move {
-            match with_refresh(auth, |token| async move {
-                api::list_libraries(&token).await
-            }).await {
+            match with_refresh(
+                auth,
+                |token| async move { api::list_libraries(&token).await },
+            )
+            .await
+            {
                 Ok(libs) => libraries.set(libs),
                 Err(e) => error.set(Some(e)),
             }
@@ -569,7 +572,9 @@ fn ProviderConfig(props: ProviderConfigProps) -> Element {
     };
 
     let mut initial_load = load_providers.clone();
-    use_effect(move || { initial_load(); });
+    use_effect(move || {
+        initial_load();
+    });
 
     let provider_list = providers();
 

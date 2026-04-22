@@ -1,13 +1,14 @@
 use anyhow::Result;
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
 };
 
 pub fn hash_password(password: &str) -> Result<String> {
     // Use getrandom to fill a 16-byte salt buffer, then base64-encode for SaltString
     let mut salt_bytes = [0u8; 16];
-    getrandom::fill(&mut salt_bytes).map_err(|e| anyhow::anyhow!("Failed to generate salt: {}", e))?;
+    getrandom::fill(&mut salt_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to generate salt: {}", e))?;
     let salt = SaltString::encode_b64(&salt_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to encode salt: {}", e))?;
     let argon2 = Argon2::default();

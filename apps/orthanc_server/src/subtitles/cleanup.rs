@@ -80,7 +80,12 @@ pub fn enforce_size_cap(cache_dir: &Path, max_bytes: u64, protected: &HashSet<i6
         .into_iter()
         .map(|(path, stream_id, meta)| {
             let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            CacheEntry { path, stream_id, size: meta.len(), mtime }
+            CacheEntry {
+                path,
+                stream_id,
+                size: meta.len(),
+                mtime,
+            }
         })
         .filter(|c| match c.stream_id {
             Some(id) => !protected.contains(&id),
@@ -148,10 +153,8 @@ pub async fn run_cleanup_loop(
             .map(|mb| mb.saturating_mul(1_024 * 1_024))
             .unwrap_or(default_max_bytes);
         let cache_dir = cache_dir.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            full_sweep(&cache_dir, &live_ids, max_bytes)
-        })
-        .await;
+        let _ =
+            tokio::task::spawn_blocking(move || full_sweep(&cache_dir, &live_ids, max_bytes)).await;
     }
 }
 

@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::{
     api::{self, CreateUserRequest, UpdateUserRequest, UserResponse},
     state::{AuthState, with_refresh},
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn AdminUsers() -> Element {
@@ -27,9 +27,12 @@ pub fn AdminUsers() -> Element {
         let pg = page();
         loading.set(true);
         spawn(async move {
-            match with_refresh(auth, |token| async move {
-                api::list_users(&token, pg).await
-            }).await {
+            match with_refresh(
+                auth,
+                |token| async move { api::list_users(&token, pg).await },
+            )
+            .await
+            {
                 Ok(resp) => {
                     users.set(resp.users);
                     total.set(resp.total);

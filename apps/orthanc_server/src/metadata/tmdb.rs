@@ -255,13 +255,17 @@ impl TmdbClient {
         debug!("TMDB TV season detail: {} S{}", tv_id, season_number);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            debug!("TMDB season not found: {} S{} ({})", tv_id, season_number, resp.status());
+            debug!(
+                "TMDB season not found: {} S{} ({})",
+                tv_id,
+                season_number,
+                resp.status()
+            );
             return Ok(None);
         }
         let detail: TvSeasonDetail = resp.json().await?;
         Ok(Some(detail))
     }
-
 
     // ── Image download ──
 

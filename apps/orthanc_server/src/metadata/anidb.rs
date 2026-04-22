@@ -234,7 +234,11 @@ impl AnidbClient {
         }
 
         results.sort_by_key(|r| r.2);
-        results.into_iter().map(|(aid, name, _)| (aid, name)).take(10).collect()
+        results
+            .into_iter()
+            .map(|(aid, name, _)| (aid, name))
+            .take(10)
+            .collect()
     }
 
     /// Get full anime detail from the HTTP API.
@@ -286,7 +290,9 @@ impl AnidbClient {
 }
 
 /// Download and parse the AniDB anime-titles dump.
-async fn download_title_dump(client: &reqwest::Client) -> Result<Vec<AnimeTitleEntry>, anyhow::Error> {
+async fn download_title_dump(
+    client: &reqwest::Client,
+) -> Result<Vec<AnimeTitleEntry>, anyhow::Error> {
     debug!("Downloading AniDB title dump...");
     let resp = client
         .get(TITLES_URL)
@@ -303,8 +309,8 @@ async fn download_title_dump(client: &reqwest::Client) -> Result<Vec<AnimeTitleE
 
     debug!("Parsing AniDB title dump ({} bytes)...", xml.len());
 
-    let dump: TitlesDump = from_str(&xml)
-        .map_err(|e| anyhow::anyhow!("Failed to parse AniDB titles XML: {}", e))?;
+    let dump: TitlesDump =
+        from_str(&xml).map_err(|e| anyhow::anyhow!("Failed to parse AniDB titles XML: {}", e))?;
 
     let entries: Vec<AnimeTitleEntry> = dump
         .animes
@@ -336,12 +342,10 @@ pub fn clean_description(text: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
 
-    static RE_ANIDB_LINK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"http://anidb\.net/\S+\s*\[([^\]]+)\]").unwrap()
-    });
-    static RE_BARE_LINK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"http://anidb\.net/\S+").unwrap()
-    });
+    static RE_ANIDB_LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"http://anidb\.net/\S+\s*\[([^\]]+)\]").unwrap());
+    static RE_BARE_LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"http://anidb\.net/\S+").unwrap());
 
     let mut s = RE_ANIDB_LINK.replace_all(text, "$1").to_string();
     s = RE_BARE_LINK.replace_all(&s, "").to_string();

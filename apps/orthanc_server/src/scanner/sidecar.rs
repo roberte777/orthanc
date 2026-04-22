@@ -36,7 +36,10 @@ impl SidecarFormat {
 
     /// Whether this format can be converted to WebVTT (vs. requiring burn-in).
     pub fn is_text(&self) -> bool {
-        matches!(self, SidecarFormat::Subrip | SidecarFormat::WebVtt | SidecarFormat::Ass)
+        matches!(
+            self,
+            SidecarFormat::Subrip | SidecarFormat::WebVtt | SidecarFormat::Ass
+        )
     }
 
     fn from_ext(ext: &str) -> Option<Self> {
@@ -79,12 +82,13 @@ pub fn discover_sidecars(video_path: &Path) -> Vec<SidecarInfo> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let mut scanned_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    let mut scan = |dir: &Path, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
-        let key = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-        if seen.insert(key) {
-            collect_files(dir, out);
-        }
-    };
+    let mut scan =
+        |dir: &Path, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+            let key = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+            if seen.insert(key) {
+                collect_files(dir, out);
+            }
+        };
     scan(parent, &mut candidates, &mut scanned_dirs);
     for sub in &["Subs", "Subtitles", "subs", "subtitles"] {
         let sub_dir = parent.join(sub);

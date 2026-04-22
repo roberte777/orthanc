@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use crate::api::{self, MediaItemResponse};
 use crate::state::{AuthState, with_refresh};
+use dioxus::prelude::*;
 
 fn format_size(bytes: Option<i64>) -> String {
     match bytes {
@@ -53,9 +53,12 @@ pub fn BrowseShows() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            if let Ok(s) = with_refresh(auth, |token| async move {
-                api::get_all_shows(&token).await
-            }).await {
+            if let Ok(s) = with_refresh(
+                auth,
+                |token| async move { api::get_all_shows(&token).await },
+            )
+            .await
+            {
                 shows.set(s);
             }
             loading.set(false);
@@ -89,7 +92,10 @@ fn ShowGridCard(item: MediaItemResponse) -> Element {
     let year = format_year(&item.release_date);
     let id = item.id;
     let has_poster = item.poster_url.is_some();
-    let poster_src = item.poster_url.clone().map(|p| format!("{}{}", api_base(), p));
+    let poster_src = item
+        .poster_url
+        .clone()
+        .map(|p| format!("{}{}", api_base(), p));
 
     rsx! {
         Link {
@@ -136,9 +142,7 @@ pub fn ShowDetail(id: i64) -> Element {
 
     let load_show = move || {
         spawn(async move {
-            match with_refresh(auth, |token| async move {
-                api::get_show(&token, id).await
-            }).await {
+            match with_refresh(auth, |token| async move { api::get_show(&token, id).await }).await {
                 Ok(s) => {
                     show.set(Some(s));
                     load_count += 1;
@@ -150,7 +154,9 @@ pub fn ShowDetail(id: i64) -> Element {
     };
 
     let mut initial_load = load_show.clone();
-    use_effect(move || { initial_load(); });
+    use_effect(move || {
+        initial_load();
+    });
 
     if loading() {
         return rsx! { div { class: "page", div { class: "loading", "Loading..." } } };
@@ -168,13 +174,17 @@ pub fn ShowDetail(id: i64) -> Element {
     let season_count = seasons.len();
     let episode_count = count_episodes(&s);
     let cb = load_count();
-    let backdrop_src = s.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
-    let poster_src = s.poster_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cb));
+    let backdrop_src = s
+        .backdrop_url
+        .clone()
+        .map(|p| format!("{}{}?v={}", api_base(), p, cb));
+    let poster_src = s
+        .poster_url
+        .clone()
+        .map(|p| format!("{}{}?v={}", api_base(), p, cb));
 
     let current_season = seasons.get(active_season()).cloned();
-    let episodes = current_season
-        .and_then(|s| s.children)
-        .unwrap_or_default();
+    let episodes = current_season.and_then(|s| s.children).unwrap_or_default();
 
     rsx! {
         div { class: "detail-page",
@@ -331,7 +341,10 @@ fn EpisodeRow(episode: MediaItemResponse, cache_bust: u32) -> Element {
     let ep_id = episode.id;
     let ep_num = episode.episode_number.unwrap_or(0);
     let runtime = format_runtime(episode.duration_seconds);
-    let thumb_src = episode.backdrop_url.clone().map(|p| format!("{}{}?v={}", api_base(), p, cache_bust));
+    let thumb_src = episode
+        .backdrop_url
+        .clone()
+        .map(|p| format!("{}{}?v={}", api_base(), p, cache_bust));
     let has_thumb = thumb_src.is_some();
     let nav = use_navigator();
 

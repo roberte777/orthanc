@@ -37,10 +37,7 @@ mod tests {
         let file = root_dir.path().join("movie.srt");
         fs::write(&file, b"").unwrap();
 
-        let ok = validate_under_roots(
-            file.to_str().unwrap(),
-            &[root_dir.path().to_path_buf()],
-        );
+        let ok = validate_under_roots(file.to_str().unwrap(), &[root_dir.path().to_path_buf()]);
         assert!(ok.is_ok(), "expected Ok, got {:?}", ok);
     }
 
@@ -51,10 +48,7 @@ mod tests {
         fs::create_dir_all(deep.parent().unwrap()).unwrap();
         fs::write(&deep, b"").unwrap();
 
-        let ok = validate_under_roots(
-            deep.to_str().unwrap(),
-            &[root_dir.path().to_path_buf()],
-        );
+        let ok = validate_under_roots(deep.to_str().unwrap(), &[root_dir.path().to_path_buf()]);
         assert!(ok.is_ok());
     }
 
@@ -65,10 +59,7 @@ mod tests {
         let outside = outside_dir.path().join("evil.srt");
         fs::write(&outside, b"").unwrap();
 
-        let err = validate_under_roots(
-            outside.to_str().unwrap(),
-            &[root_dir.path().to_path_buf()],
-        );
+        let err = validate_under_roots(outside.to_str().unwrap(), &[root_dir.path().to_path_buf()]);
         assert!(err.is_err(), "expected error, got {:?}", err);
     }
 
@@ -92,10 +83,7 @@ mod tests {
         fs::write(&file, b"").unwrap();
         let traversal = format!("{}/../movie.srt", sub.display());
 
-        let ok = validate_under_roots(
-            &traversal,
-            &[root_dir.path().to_path_buf()],
-        );
+        let ok = validate_under_roots(&traversal, &[root_dir.path().to_path_buf()]);
         assert!(ok.is_ok(), "expected Ok, got {:?}", ok);
     }
 
@@ -111,10 +99,8 @@ mod tests {
             let link = root_dir.path().join("link.srt");
             std::os::unix::fs::symlink(&target, &link).unwrap();
 
-            let err = validate_under_roots(
-                link.to_str().unwrap(),
-                &[root_dir.path().to_path_buf()],
-            );
+            let err =
+                validate_under_roots(link.to_str().unwrap(), &[root_dir.path().to_path_buf()]);
             assert!(err.is_err(), "expected error, got {:?}", err);
         }
     }

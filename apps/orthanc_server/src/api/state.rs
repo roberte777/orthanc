@@ -95,11 +95,9 @@ impl AppState {
 
         const DEFAULT_TMDB_API_KEY: &str = "90c1d19c76fe6f06350a3df495e75365";
 
-        let tmdb_api_key = Some(
-            overrides.tmdb_api_key.clone().unwrap_or_else(|| {
-                std::env::var("TMDB_API_KEY").unwrap_or_else(|_| DEFAULT_TMDB_API_KEY.to_string())
-            }),
-        );
+        let tmdb_api_key = Some(overrides.tmdb_api_key.clone().unwrap_or_else(|| {
+            std::env::var("TMDB_API_KEY").unwrap_or_else(|_| DEFAULT_TMDB_API_KEY.to_string())
+        }));
 
         // Embedded TVDB project API key (like Jellyfin's TvdbPlugin). Users may
         // override with their own subscriber key via the admin settings UI or TVDB_API_KEY.
@@ -109,12 +107,16 @@ impl AppState {
             std::env::var("TVDB_API_KEY").unwrap_or_else(|_| DEFAULT_TVDB_API_KEY.to_string())
         });
 
-        let image_cache_dir = std::env::var("IMAGE_CACHE_DIR")
-            .unwrap_or_else(|_| "./image_cache".to_string());
+        let image_cache_dir =
+            std::env::var("IMAGE_CACHE_DIR").unwrap_or_else(|_| "./image_cache".to_string());
 
         // Ensure image cache directory exists
         if let Err(e) = std::fs::create_dir_all(&image_cache_dir) {
-            tracing::error!("Failed to create image cache dir '{}': {}", image_cache_dir, e);
+            tracing::error!(
+                "Failed to create image cache dir '{}': {}",
+                image_cache_dir,
+                e
+            );
         }
 
         let max_concurrent_streams = overrides.max_concurrent_streams.unwrap_or_else(|| {
@@ -135,7 +137,11 @@ impl AppState {
             .unwrap_or_else(|_| "./transcode_cache".to_string());
 
         if let Err(e) = std::fs::create_dir_all(&transcode_cache_dir) {
-            tracing::error!("Failed to create transcode cache dir '{}': {}", transcode_cache_dir, e);
+            tracing::error!(
+                "Failed to create transcode cache dir '{}': {}",
+                transcode_cache_dir,
+                e
+            );
         }
 
         let max_concurrent_transcodes = overrides.max_concurrent_transcodes.unwrap_or_else(|| {
@@ -151,8 +157,8 @@ impl AppState {
             max_concurrent_transcodes,
         ));
 
-        let subtitle_cache_dir = std::env::var("SUBTITLE_CACHE_DIR")
-            .unwrap_or_else(|_| "./subtitle_cache".to_string());
+        let subtitle_cache_dir =
+            std::env::var("SUBTITLE_CACHE_DIR").unwrap_or_else(|_| "./subtitle_cache".to_string());
         let subtitle_cache_max_mb = std::env::var("SUBTITLE_CACHE_MAX_MB")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
@@ -212,7 +218,10 @@ async fn load_library_roots(db: &DbPool) -> Vec<PathBuf> {
             if path.exists() {
                 Some(path)
             } else {
-                tracing::warn!("Library path '{}' does not exist; skipping for subtitle roots", p);
+                tracing::warn!(
+                    "Library path '{}' does not exist; skipping for subtitle roots",
+                    p
+                );
                 None
             }
         })

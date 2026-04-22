@@ -32,29 +32,22 @@ static RE_TV_SONARR: LazyLock<Regex> = LazyLock::new(|| {
 
 // TV: "Show.Name.S01E02.Episode.Title.720p.mkv" (dotted style)
 static RE_TV_DOTTED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(.+?)\.S(\d+)E(\d+)\.?(.*?)(?:\.\d{3,4}p|\[|\.\w{2,4}$)")
-        .unwrap()
+    Regex::new(r"(?i)^(.+?)\.S(\d+)E(\d+)\.?(.*?)(?:\.\d{3,4}p|\[|\.\w{2,4}$)").unwrap()
 });
 
 // TV: generic fallback - anything with SxxExx
-static RE_TV_GENERIC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)S(\d+)E(\d+)").unwrap()
-});
+static RE_TV_GENERIC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)S(\d+)E(\d+)").unwrap());
 
 // Year in parentheses: "(2024)"
-static RE_YEAR_PAREN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\((\d{4})\)").unwrap()
-});
+static RE_YEAR_PAREN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d{4})\)").unwrap());
 
 // Year in dots: ".2024." or ".2024" at end
-static RE_YEAR_DOT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[\.\s](\d{4})(?:[\.\s]|$)").unwrap()
-});
+static RE_YEAR_DOT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\.\s](\d{4})(?:[\.\s]|$)").unwrap());
 
 // Multi-part: Part1, Part2, Disc1, Disc2, CD1, CD2 etc.
-static RE_MULTI_PART: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:part|disc|cd|pt)[\s._-]*(\d+)").unwrap()
-});
+static RE_MULTI_PART: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:part|disc|cd|pt)[\s._-]*(\d+)").unwrap());
 
 // Quality/tag markers - everything from here on is metadata, not title
 static RE_QUALITY_MARKER: LazyLock<Regex> = LazyLock::new(|| {
@@ -62,14 +55,12 @@ static RE_QUALITY_MARKER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // External ID tags: {tmdb-12345}, {tvdb-12345}, {imdb-tt12345}
-static RE_EXTERNAL_ID: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\{(?:tmdb|tvdb|imdb)-[^\}]+\}").unwrap()
-});
+static RE_EXTERNAL_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{(?:tmdb|tvdb|imdb)-[^\}]+\}").unwrap());
 
 // Release group at end: -GroupName
-static RE_RELEASE_GROUP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"-[A-Za-z][A-Za-z0-9]+$").unwrap()
-});
+static RE_RELEASE_GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"-[A-Za-z][A-Za-z0-9]+$").unwrap());
 
 /// Parse a media file based on its filename and the library type context.
 pub fn parse_media_file(file_info: &FileInfo, library_type: &str) -> ParsedMedia {
@@ -111,11 +102,7 @@ pub fn parse_media_file(file_info: &FileInfo, library_type: &str) -> ParsedMedia
     }
 }
 
-fn parse_episode(
-    filename: &str,
-    parent_name: &str,
-    grandparent_name: &str,
-) -> Option<ParsedMedia> {
+fn parse_episode(filename: &str, parent_name: &str, grandparent_name: &str) -> Option<ParsedMedia> {
     // Try Sonarr-style: "SHOW NAME (2020) - S03E01 - Episode Title [tags]"
     if let Some(caps) = RE_TV_SONARR.captures(filename) {
         let raw_name = caps.get(1).unwrap().as_str().trim();

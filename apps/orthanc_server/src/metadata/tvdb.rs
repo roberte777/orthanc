@@ -264,12 +264,7 @@ impl TvdbClient {
             self.rate_limit().await;
             let token = self.get_token().await?;
             let url = format!("{}{}", BASE_URL, path);
-            let resp = self
-                .client
-                .get(&url)
-                .bearer_auth(&token)
-                .send()
-                .await?;
+            let resp = self.client.get(&url).bearer_auth(&token).send().await?;
 
             let status = resp.status();
             if status == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
@@ -278,13 +273,21 @@ impl TvdbClient {
                 continue;
             }
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
-                warn!("TVDB rate limited, backing off {}s", BACKOFF_ON_429.as_secs());
+                warn!(
+                    "TVDB rate limited, backing off {}s",
+                    BACKOFF_ON_429.as_secs()
+                );
                 tokio::time::sleep(BACKOFF_ON_429).await;
                 continue;
             }
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(anyhow::anyhow!("TVDB {} failed ({}): {}", path, status, body));
+                return Err(anyhow::anyhow!(
+                    "TVDB {} failed ({}): {}",
+                    path,
+                    status,
+                    body
+                ));
             }
             let body = resp.text().await?;
             let env: Envelope<T> = serde_json::from_str(&body).map_err(|e| {
@@ -294,7 +297,10 @@ impl TvdbClient {
             })?;
             return Ok(env.data);
         }
-        Err(anyhow::anyhow!("TVDB request to {} failed after retry", path))
+        Err(anyhow::anyhow!(
+            "TVDB request to {} failed after retry",
+            path
+        ))
     }
 
     pub async fn search_series(&self, query: &str) -> Result<Vec<SearchResult>, anyhow::Error> {
@@ -332,12 +338,21 @@ impl TvdbClient {
             page += 1;
             // Safety cap to avoid infinite loops
             if page > 20 {
-                warn!("TVDB episodes pagination exceeded 20 pages for series {}", id);
+                warn!(
+                    "TVDB episodes pagination exceeded 20 pages for series {}",
+                    id
+                );
                 break;
             }
         }
-        debug!("TVDB fetched {} total episodes for series {}", all_episodes.len(), id);
-        Ok(SeriesEpisodesData { episodes: all_episodes })
+        debug!(
+            "TVDB fetched {} total episodes for series {}",
+            all_episodes.len(),
+            id
+        );
+        Ok(SeriesEpisodesData {
+            episodes: all_episodes,
+        })
     }
 
     /// Fetch the English translation for a series (name + overview).

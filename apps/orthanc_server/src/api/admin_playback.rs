@@ -4,9 +4,9 @@ use crate::{
     transcoding::ActiveSessionInfo,
 };
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -62,15 +62,15 @@ async fn stop_session(
     Ok(Json(serde_json::json!({"message": "Session stopped"})))
 }
 
-async fn fetch_usernames(
-    db: &crate::db::DbPool,
-    ids: &[i64],
-) -> ApiResult<HashMap<i64, String>> {
+async fn fetch_usernames(db: &crate::db::DbPool, ids: &[i64]) -> ApiResult<HashMap<i64, String>> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
     let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!("SELECT id, username FROM users WHERE id IN ({})", placeholders);
+    let sql = format!(
+        "SELECT id, username FROM users WHERE id IN ({})",
+        placeholders
+    );
     let mut q = sqlx::query_as::<_, (i64, String)>(&sql);
     for id in ids {
         q = q.bind(id);
@@ -87,7 +87,10 @@ async fn fetch_media_titles(
         return Ok(HashMap::new());
     }
     let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!("SELECT id, title FROM media_items WHERE id IN ({})", placeholders);
+    let sql = format!(
+        "SELECT id, title FROM media_items WHERE id IN ({})",
+        placeholders
+    );
     let mut q = sqlx::query_as::<_, (i64, String)>(&sql);
     for id in ids {
         q = q.bind(id);

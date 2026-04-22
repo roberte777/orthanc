@@ -1,5 +1,8 @@
+use crate::{
+    api::{self, Setting},
+    state::{AuthState, with_refresh},
+};
 use dioxus::prelude::*;
-use crate::{api::{self, Setting}, state::{AuthState, with_refresh}};
 
 struct SettingMeta {
     key: &'static str,
@@ -9,28 +12,80 @@ struct SettingMeta {
 }
 
 const KNOWN_SETTINGS: &[SettingMeta] = &[
-    SettingMeta { key: "server_name",                   label: "Server Name",                  section: "General",   secret: false },
-    SettingMeta { key: "library_scan_interval_minutes", label: "Default Scan Interval (min)",  section: "Libraries", secret: false },
-    SettingMeta { key: "max_concurrent_streams",        label: "Max Concurrent Streams",       section: "Streaming", secret: false },
-    SettingMeta { key: "max_concurrent_transcodes",     label: "Max Concurrent Transcodes",    section: "Streaming", secret: false },
-    SettingMeta { key: "stream_token_expiry_minutes",   label: "Stream Token Expiry (min)",    section: "Streaming", secret: false },
-    SettingMeta { key: "subtitle_cache_max_mb",         label: "Subtitle Cache Max (MB)",      section: "Cache",     secret: false },
-    SettingMeta { key: "tmdb_api_key",                  label: "TMDB API Key",                 section: "Metadata",  secret: true  },
-    SettingMeta { key: "tvdb_api_key",                  label: "TVDB API Key",                 section: "Metadata",  secret: true  },
+    SettingMeta {
+        key: "server_name",
+        label: "Server Name",
+        section: "General",
+        secret: false,
+    },
+    SettingMeta {
+        key: "library_scan_interval_minutes",
+        label: "Default Scan Interval (min)",
+        section: "Libraries",
+        secret: false,
+    },
+    SettingMeta {
+        key: "max_concurrent_streams",
+        label: "Max Concurrent Streams",
+        section: "Streaming",
+        secret: false,
+    },
+    SettingMeta {
+        key: "max_concurrent_transcodes",
+        label: "Max Concurrent Transcodes",
+        section: "Streaming",
+        secret: false,
+    },
+    SettingMeta {
+        key: "stream_token_expiry_minutes",
+        label: "Stream Token Expiry (min)",
+        section: "Streaming",
+        secret: false,
+    },
+    SettingMeta {
+        key: "subtitle_cache_max_mb",
+        label: "Subtitle Cache Max (MB)",
+        section: "Cache",
+        secret: false,
+    },
+    SettingMeta {
+        key: "tmdb_api_key",
+        label: "TMDB API Key",
+        section: "Metadata",
+        secret: true,
+    },
+    SettingMeta {
+        key: "tvdb_api_key",
+        label: "TVDB API Key",
+        section: "Metadata",
+        secret: true,
+    },
 ];
 
 fn is_secret(key: &str) -> bool {
-    KNOWN_SETTINGS.iter().find(|m| m.key == key).map(|m| m.secret).unwrap_or(false)
+    KNOWN_SETTINGS
+        .iter()
+        .find(|m| m.key == key)
+        .map(|m| m.secret)
+        .unwrap_or(false)
 }
 
 const SECTIONS: &[&str] = &["General", "Libraries", "Streaming", "Cache", "Metadata"];
 
 fn label_for(key: &str) -> &'static str {
-    KNOWN_SETTINGS.iter().find(|m| m.key == key).map(|m| m.label).unwrap_or("Unknown")
+    KNOWN_SETTINGS
+        .iter()
+        .find(|m| m.key == key)
+        .map(|m| m.label)
+        .unwrap_or("Unknown")
 }
 
 fn section_for(key: &str) -> &'static str {
-    KNOWN_SETTINGS.iter().find(|m| m.key == key).map(|m| m.section).unwrap_or("Other")
+    KNOWN_SETTINGS
+        .iter()
+        .find(|m| m.key == key)
+        .map(|m| m.section)
+        .unwrap_or("Other")
 }
 
 #[component]
@@ -53,7 +108,9 @@ pub fn AdminSettings() -> Element {
         spawn(async move {
             match with_refresh(auth, |token| async move {
                 api::get_server_settings(&token).await
-            }).await {
+            })
+            .await
+            {
                 Ok(s) => {
                     let mut map = std::collections::HashMap::new();
                     for setting in &s {
@@ -83,19 +140,27 @@ pub fn AdminSettings() -> Element {
             if failed.is_empty() {
                 save_message.set(Some((true, "Settings saved".to_string())));
             } else {
-                save_message.set(Some((false, format!("Some settings failed to save: {}", failed.join(", ")))));
+                save_message.set(Some((
+                    false,
+                    format!("Some settings failed to save: {}", failed.join(", ")),
+                )));
             }
         });
     };
 
     // Build owned section data so we don't hold borrows inside rsx!
-    let section_data: Vec<(&str, Vec<Setting>)> = SECTIONS.iter().map(|section| {
-        let items = settings.read().iter()
-            .filter(|s| section_for(&s.key) == *section)
-            .cloned()
-            .collect::<Vec<_>>();
-        (*section, items)
-    }).collect();
+    let section_data: Vec<(&str, Vec<Setting>)> = SECTIONS
+        .iter()
+        .map(|section| {
+            let items = settings
+                .read()
+                .iter()
+                .filter(|s| section_for(&s.key) == *section)
+                .cloned()
+                .collect::<Vec<_>>();
+            (*section, items)
+        })
+        .collect();
 
     rsx! {
         div { class: "page settings-page",

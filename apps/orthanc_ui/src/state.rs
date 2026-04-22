@@ -47,9 +47,7 @@ impl Default for AuthState {
 pub fn save_auth(access_token: &str, refresh_token: &str) {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
-        {
+        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
             let _ = storage.set_item("access_token", access_token);
             let _ = storage.set_item("refresh_token", refresh_token);
         }
@@ -65,9 +63,7 @@ pub fn save_auth(access_token: &str, refresh_token: &str) {
 pub fn clear_auth() {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
-        {
+        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
             let _ = storage.remove_item("access_token");
             let _ = storage.remove_item("refresh_token");
         }
@@ -93,9 +89,7 @@ pub fn storage_get(key: &str) -> Option<String> {
 pub fn storage_set(key: &str, value: &str) {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
-        {
+        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
             let _ = storage.set_item(key, value);
         }
     }
@@ -110,10 +104,7 @@ pub fn storage_set(key: &str, value: &str) {
 /// If the call fails with a 401, attempts to refresh the access token using
 /// the stored refresh token, updates the auth state and localStorage, then
 /// retries the original call once.
-pub async fn with_refresh<T, F, Fut>(
-    mut auth: Signal<AuthState>,
-    f: F,
-) -> Result<T, String>
+pub async fn with_refresh<T, F, Fut>(mut auth: Signal<AuthState>, f: F) -> Result<T, String>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<T, String>>,

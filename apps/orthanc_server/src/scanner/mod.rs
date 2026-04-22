@@ -10,8 +10,8 @@ use tracing::{debug, info, warn};
 
 /// Video file extensions we recognize
 const VIDEO_EXTENSIONS: &[&str] = &[
-    "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "ts", "m2ts",
-    "vob", "ogv", "3gp", "divx", "xvid",
+    "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "ts", "m2ts", "vob",
+    "ogv", "3gp", "divx", "xvid",
 ];
 
 pub fn is_video_file(path: &std::path::Path) -> bool {
@@ -41,13 +41,27 @@ pub async fn background_scan_loop(
 
     // Initial scan on startup
     info!("Running initial library scan");
-    scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir, &ffprobe_path).await;
+    scan_all_due_libraries(
+        &db,
+        tmdb_api_key.as_deref(),
+        &tvdb_api_key,
+        &image_cache_dir,
+        &ffprobe_path,
+    )
+    .await;
 
     // Then check every 60 seconds which libraries need scanning
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        scan_all_due_libraries(&db, tmdb_api_key.as_deref(), &tvdb_api_key, &image_cache_dir, &ffprobe_path).await;
+        scan_all_due_libraries(
+            &db,
+            tmdb_api_key.as_deref(),
+            &tvdb_api_key,
+            &image_cache_dir,
+            &ffprobe_path,
+        )
+        .await;
     }
 }
 
@@ -58,18 +72,17 @@ async fn scan_all_due_libraries(
     image_cache_dir: &str,
     ffprobe_path: &str,
 ) {
-    let libraries = match sqlx::query_as::<_, Library>(
-        "SELECT * FROM libraries WHERE is_enabled = 1",
-    )
-    .fetch_all(db)
-    .await
-    {
-        Ok(libs) => libs,
-        Err(e) => {
-            warn!("Failed to load libraries for background scan: {}", e);
-            return;
-        }
-    };
+    let libraries =
+        match sqlx::query_as::<_, Library>("SELECT * FROM libraries WHERE is_enabled = 1")
+            .fetch_all(db)
+            .await
+        {
+            Ok(libs) => libs,
+            Err(e) => {
+                warn!("Failed to load libraries for background scan: {}", e);
+                return;
+            }
+        };
 
     // Admin-controlled default scan interval, applied when a library row has no
     // explicit `scan_interval_minutes`. Falls back to the hardcoded default if unset.
@@ -140,7 +153,10 @@ async fn scan_all_due_libraries(
             .unwrap_or((0,));
 
             if unscanned > 0 {
-                info!("Refreshing metadata for {} unscanned items in '{}'", unscanned, lib.name);
+                info!(
+                    "Refreshing metadata for {} unscanned items in '{}'",
+                    unscanned, lib.name
+                );
                 if let Err(e) = crate::metadata::refresh_library(
                     db,
                     api_key,
@@ -159,7 +175,11 @@ async fn scan_all_due_libraries(
 }
 
 /// Scan a single library: walk all its paths, parse filenames, and upsert into media_items.
-pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) -> Result<ScanResult, anyhow::Error> {
+pub async fn scan_library(
+    db: &DbPool,
+    library: &Library,
+    ffprobe_path: &str,
+) -> Result<ScanResult, anyhow::Error> {
     let paths = sqlx::query_as::<_, crate::models::library::LibraryPath>(
         "SELECT * FROM library_paths WHERE library_id = ? AND is_enabled = 1",
     )
@@ -172,17 +192,18 @@ pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) ->
     for lib_path in &paths {
         let root = std::path::Path::new(&lib_path.path);
         if !root.is_dir() {
-            warn!("Library path is not a directory, skipping: {}", lib_path.path);
-            result.errors.push(format!("Not a directory: {}", lib_path.path));
+            warn!(
+                "Library path is not a directory, skipping: {}",
+                lib_path.path
+            );
+            result
+                .errors
+                .push(format!("Not a directory: {}", lib_path.path));
             continue;
         }
 
         let files = walker::walk_directory(root);
-        info!(
-            "Found {} video files in {}",
-            files.len(),
-            lib_path.path
-        );
+        info!("Found {} video files in {}", files.len(), lib_path.path);
 
         for file_info in files {
             let parsed = parser::parse_media_file(&file_info, &library.library_type);
@@ -198,7 +219,9 @@ pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) ->
                 Ok(None) => result.unchanged += 1,
                 Err(e) => {
                     warn!("Failed to upsert media: {:?} - {}", file_info.path, e);
-                    result.errors.push(format!("{}: {}", file_info.path.display(), e));
+                    result
+                        .errors
+                        .push(format!("{}: {}", file_info.path.display(), e));
                 }
             }
         }
@@ -212,7 +235,10 @@ pub async fn scan_library(db: &DbPool, library: &Library, ffprobe_path: &str) ->
 
     info!(
         "Scan complete for '{}': {} added, {} unchanged, {} errors",
-        library.name, result.added, result.unchanged, result.errors.len()
+        library.name,
+        result.added,
+        result.unchanged,
+        result.errors.len()
     );
 
     Ok(result)
@@ -235,11 +261,10 @@ async fn upsert_media(
     let file_path_str = file_info.path.to_string_lossy().to_string();
 
     // Check if already scanned
-    let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM media_items WHERE file_path = ?")
-            .bind(&file_path_str)
-            .fetch_optional(db)
-            .await?;
+    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM media_items WHERE file_path = ?")
+        .bind(&file_path_str)
+        .fetch_optional(db)
+        .await?;
 
     if existing.is_some() {
         return Ok(None);
@@ -254,10 +279,7 @@ async fn upsert_media(
 
     match parsed {
         ParsedMedia::Movie {
-            title,
-            year,
-            part,
-            ..
+            title, year, part, ..
         } => {
             let display_title = if let Some(p) = part {
                 format!("{} (Part {})", title, p)
@@ -478,8 +500,10 @@ pub async fn probe_and_store_streams(
 ) {
     let output = match tokio::process::Command::new(ffprobe_path)
         .args([
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_streams",
             "-show_format",
             file_path,
@@ -513,12 +537,11 @@ pub async fn probe_and_store_streams(
 
     // Delete existing embedded streams for this item. External (sidecar)
     // subtitle rows are preserved — they're managed by sidecar discovery.
-    if let Err(e) = sqlx::query(
-        "DELETE FROM media_streams WHERE media_item_id = ? AND is_external = 0",
-    )
-    .bind(media_item_id)
-    .execute(db)
-    .await
+    if let Err(e) =
+        sqlx::query("DELETE FROM media_streams WHERE media_item_id = ? AND is_external = 0")
+            .bind(media_item_id)
+            .execute(db)
+            .await
     {
         warn!("Failed to clear old media_streams: {}", e);
         return;
@@ -540,14 +563,8 @@ pub async fn probe_and_store_streams(
             .bits_per_raw_sample
             .as_deref()
             .and_then(|b| b.parse::<i32>().ok());
-        let sample_rate = s
-            .sample_rate
-            .as_deref()
-            .and_then(|r| r.parse::<i32>().ok());
-        let bit_rate = s
-            .bit_rate
-            .as_deref()
-            .and_then(|r| r.parse::<i32>().ok());
+        let sample_rate = s.sample_rate.as_deref().and_then(|r| r.parse::<i32>().ok());
+        let bit_rate = s.bit_rate.as_deref().and_then(|r| r.parse::<i32>().ok());
 
         if let Err(e) = sqlx::query(
             "INSERT INTO media_streams (media_item_id, stream_index, stream_type, codec, language, title, is_default, is_forced, width, height, aspect_ratio, frame_rate, bit_depth, color_space, channels, sample_rate, bit_rate)
@@ -617,7 +634,11 @@ fn parse_frame_rate(rate: &str) -> Option<f64> {
 ///
 /// Sidecar streams use synthetic `stream_index` values starting at 1000 to
 /// avoid colliding with embedded ffprobe stream indices.
-pub async fn sync_external_subtitles(db: &DbPool, media_item_id: i64, video_path: &std::path::Path) {
+pub async fn sync_external_subtitles(
+    db: &DbPool,
+    media_item_id: i64,
+    video_path: &std::path::Path,
+) {
     let discovered = sidecar::discover_sidecars(video_path);
 
     // Load currently-indexed external subtitles for this item
@@ -639,10 +660,8 @@ pub async fn sync_external_subtitles(db: &DbPool, media_item_id: i64, video_path
         .iter()
         .map(|s| s.path.to_string_lossy().to_string())
         .collect();
-    let existing_paths: std::collections::HashSet<String> = existing
-        .iter()
-        .filter_map(|(_, p)| p.clone())
-        .collect();
+    let existing_paths: std::collections::HashSet<String> =
+        existing.iter().filter_map(|(_, p)| p.clone()).collect();
 
     // Remove rows for sidecars that have been deleted from disk
     for (row_id, path) in &existing {
@@ -653,7 +672,10 @@ pub async fn sync_external_subtitles(db: &DbPool, media_item_id: i64, video_path
                     .execute(db)
                     .await
                 {
-                    warn!("Failed to delete stale external subtitle row {}: {}", row_id, e);
+                    warn!(
+                        "Failed to delete stale external subtitle row {}: {}",
+                        row_id, e
+                    );
                 }
             }
         }
@@ -736,7 +758,10 @@ pub async fn backfill_external_subtitles(db: &DbPool) {
         sync_external_subtitles(db, *id, p).await;
         scanned += 1;
     }
-    info!("Sidecar subtitle backfill complete: scanned {} item(s)", scanned);
+    info!(
+        "Sidecar subtitle backfill complete: scanned {} item(s)",
+        scanned
+    );
 }
 
 /// Backfill media_streams for items that were scanned before ffprobe integration.

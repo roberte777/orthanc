@@ -58,47 +58,252 @@ struct LangEntry {
 }
 
 const LANG_TABLE: &[LangEntry] = &[
-    LangEntry { iso1: "en", iso2: "eng", iso3: "eng", name: "english" },
-    LangEntry { iso1: "es", iso2: "spa", iso3: "spa", name: "spanish" },
-    LangEntry { iso1: "fr", iso2: "fre", iso3: "fra", name: "french" },
-    LangEntry { iso1: "de", iso2: "ger", iso3: "deu", name: "german" },
-    LangEntry { iso1: "it", iso2: "ita", iso3: "ita", name: "italian" },
-    LangEntry { iso1: "pt", iso2: "por", iso3: "por", name: "portuguese" },
-    LangEntry { iso1: "nl", iso2: "dut", iso3: "nld", name: "dutch" },
-    LangEntry { iso1: "ja", iso2: "jpn", iso3: "jpn", name: "japanese" },
-    LangEntry { iso1: "ko", iso2: "kor", iso3: "kor", name: "korean" },
-    LangEntry { iso1: "zh", iso2: "chi", iso3: "zho", name: "chinese" },
-    LangEntry { iso1: "ru", iso2: "rus", iso3: "rus", name: "russian" },
-    LangEntry { iso1: "ar", iso2: "ara", iso3: "ara", name: "arabic" },
-    LangEntry { iso1: "hi", iso2: "hin", iso3: "hin", name: "hindi" },
-    LangEntry { iso1: "pl", iso2: "pol", iso3: "pol", name: "polish" },
-    LangEntry { iso1: "tr", iso2: "tur", iso3: "tur", name: "turkish" },
-    LangEntry { iso1: "sv", iso2: "swe", iso3: "swe", name: "swedish" },
-    LangEntry { iso1: "no", iso2: "nor", iso3: "nor", name: "norwegian" },
-    LangEntry { iso1: "da", iso2: "dan", iso3: "dan", name: "danish" },
-    LangEntry { iso1: "fi", iso2: "fin", iso3: "fin", name: "finnish" },
-    LangEntry { iso1: "el", iso2: "gre", iso3: "ell", name: "greek" },
-    LangEntry { iso1: "cs", iso2: "cze", iso3: "ces", name: "czech" },
-    LangEntry { iso1: "hu", iso2: "hun", iso3: "hun", name: "hungarian" },
-    LangEntry { iso1: "ro", iso2: "rum", iso3: "ron", name: "romanian" },
-    LangEntry { iso1: "he", iso2: "heb", iso3: "heb", name: "hebrew" },
-    LangEntry { iso1: "th", iso2: "tha", iso3: "tha", name: "thai" },
-    LangEntry { iso1: "vi", iso2: "vie", iso3: "vie", name: "vietnamese" },
-    LangEntry { iso1: "id", iso2: "ind", iso3: "ind", name: "indonesian" },
-    LangEntry { iso1: "ms", iso2: "may", iso3: "msa", name: "malay" },
-    LangEntry { iso1: "uk", iso2: "ukr", iso3: "ukr", name: "ukrainian" },
-    LangEntry { iso1: "bg", iso2: "bul", iso3: "bul", name: "bulgarian" },
-    LangEntry { iso1: "hr", iso2: "hrv", iso3: "hrv", name: "croatian" },
-    LangEntry { iso1: "sr", iso2: "srp", iso3: "srp", name: "serbian" },
-    LangEntry { iso1: "sk", iso2: "slo", iso3: "slk", name: "slovak" },
-    LangEntry { iso1: "sl", iso2: "slv", iso3: "slv", name: "slovenian" },
-    LangEntry { iso1: "ca", iso2: "cat", iso3: "cat", name: "catalan" },
-    LangEntry { iso1: "lt", iso2: "lit", iso3: "lit", name: "lithuanian" },
-    LangEntry { iso1: "lv", iso2: "lav", iso3: "lav", name: "latvian" },
-    LangEntry { iso1: "et", iso2: "est", iso3: "est", name: "estonian" },
-    LangEntry { iso1: "fa", iso2: "per", iso3: "fas", name: "persian" },
-    LangEntry { iso1: "bn", iso2: "ben", iso3: "ben", name: "bengali" },
-    LangEntry { iso1: "ta", iso2: "tam", iso3: "tam", name: "tamil" },
+    LangEntry {
+        iso1: "en",
+        iso2: "eng",
+        iso3: "eng",
+        name: "english",
+    },
+    LangEntry {
+        iso1: "es",
+        iso2: "spa",
+        iso3: "spa",
+        name: "spanish",
+    },
+    LangEntry {
+        iso1: "fr",
+        iso2: "fre",
+        iso3: "fra",
+        name: "french",
+    },
+    LangEntry {
+        iso1: "de",
+        iso2: "ger",
+        iso3: "deu",
+        name: "german",
+    },
+    LangEntry {
+        iso1: "it",
+        iso2: "ita",
+        iso3: "ita",
+        name: "italian",
+    },
+    LangEntry {
+        iso1: "pt",
+        iso2: "por",
+        iso3: "por",
+        name: "portuguese",
+    },
+    LangEntry {
+        iso1: "nl",
+        iso2: "dut",
+        iso3: "nld",
+        name: "dutch",
+    },
+    LangEntry {
+        iso1: "ja",
+        iso2: "jpn",
+        iso3: "jpn",
+        name: "japanese",
+    },
+    LangEntry {
+        iso1: "ko",
+        iso2: "kor",
+        iso3: "kor",
+        name: "korean",
+    },
+    LangEntry {
+        iso1: "zh",
+        iso2: "chi",
+        iso3: "zho",
+        name: "chinese",
+    },
+    LangEntry {
+        iso1: "ru",
+        iso2: "rus",
+        iso3: "rus",
+        name: "russian",
+    },
+    LangEntry {
+        iso1: "ar",
+        iso2: "ara",
+        iso3: "ara",
+        name: "arabic",
+    },
+    LangEntry {
+        iso1: "hi",
+        iso2: "hin",
+        iso3: "hin",
+        name: "hindi",
+    },
+    LangEntry {
+        iso1: "pl",
+        iso2: "pol",
+        iso3: "pol",
+        name: "polish",
+    },
+    LangEntry {
+        iso1: "tr",
+        iso2: "tur",
+        iso3: "tur",
+        name: "turkish",
+    },
+    LangEntry {
+        iso1: "sv",
+        iso2: "swe",
+        iso3: "swe",
+        name: "swedish",
+    },
+    LangEntry {
+        iso1: "no",
+        iso2: "nor",
+        iso3: "nor",
+        name: "norwegian",
+    },
+    LangEntry {
+        iso1: "da",
+        iso2: "dan",
+        iso3: "dan",
+        name: "danish",
+    },
+    LangEntry {
+        iso1: "fi",
+        iso2: "fin",
+        iso3: "fin",
+        name: "finnish",
+    },
+    LangEntry {
+        iso1: "el",
+        iso2: "gre",
+        iso3: "ell",
+        name: "greek",
+    },
+    LangEntry {
+        iso1: "cs",
+        iso2: "cze",
+        iso3: "ces",
+        name: "czech",
+    },
+    LangEntry {
+        iso1: "hu",
+        iso2: "hun",
+        iso3: "hun",
+        name: "hungarian",
+    },
+    LangEntry {
+        iso1: "ro",
+        iso2: "rum",
+        iso3: "ron",
+        name: "romanian",
+    },
+    LangEntry {
+        iso1: "he",
+        iso2: "heb",
+        iso3: "heb",
+        name: "hebrew",
+    },
+    LangEntry {
+        iso1: "th",
+        iso2: "tha",
+        iso3: "tha",
+        name: "thai",
+    },
+    LangEntry {
+        iso1: "vi",
+        iso2: "vie",
+        iso3: "vie",
+        name: "vietnamese",
+    },
+    LangEntry {
+        iso1: "id",
+        iso2: "ind",
+        iso3: "ind",
+        name: "indonesian",
+    },
+    LangEntry {
+        iso1: "ms",
+        iso2: "may",
+        iso3: "msa",
+        name: "malay",
+    },
+    LangEntry {
+        iso1: "uk",
+        iso2: "ukr",
+        iso3: "ukr",
+        name: "ukrainian",
+    },
+    LangEntry {
+        iso1: "bg",
+        iso2: "bul",
+        iso3: "bul",
+        name: "bulgarian",
+    },
+    LangEntry {
+        iso1: "hr",
+        iso2: "hrv",
+        iso3: "hrv",
+        name: "croatian",
+    },
+    LangEntry {
+        iso1: "sr",
+        iso2: "srp",
+        iso3: "srp",
+        name: "serbian",
+    },
+    LangEntry {
+        iso1: "sk",
+        iso2: "slo",
+        iso3: "slk",
+        name: "slovak",
+    },
+    LangEntry {
+        iso1: "sl",
+        iso2: "slv",
+        iso3: "slv",
+        name: "slovenian",
+    },
+    LangEntry {
+        iso1: "ca",
+        iso2: "cat",
+        iso3: "cat",
+        name: "catalan",
+    },
+    LangEntry {
+        iso1: "lt",
+        iso2: "lit",
+        iso3: "lit",
+        name: "lithuanian",
+    },
+    LangEntry {
+        iso1: "lv",
+        iso2: "lav",
+        iso3: "lav",
+        name: "latvian",
+    },
+    LangEntry {
+        iso1: "et",
+        iso2: "est",
+        iso3: "est",
+        name: "estonian",
+    },
+    LangEntry {
+        iso1: "fa",
+        iso2: "per",
+        iso3: "fas",
+        name: "persian",
+    },
+    LangEntry {
+        iso1: "bn",
+        iso2: "ben",
+        iso3: "ben",
+        name: "bengali",
+    },
+    LangEntry {
+        iso1: "ta",
+        iso2: "tam",
+        iso3: "tam",
+        name: "tamil",
+    },
 ];
 
 /// Summary of all tokens parsed from a sidecar filename suffix.
@@ -234,14 +439,23 @@ mod tests {
 
     #[test]
     fn classifies_english_name() {
-        assert_eq!(classify_token("english"), Some(Token::Language("en".into())));
-        assert_eq!(classify_token("Spanish"), Some(Token::Language("es".into())));
+        assert_eq!(
+            classify_token("english"),
+            Some(Token::Language("en".into()))
+        );
+        assert_eq!(
+            classify_token("Spanish"),
+            Some(Token::Language("es".into()))
+        );
     }
 
     #[test]
     fn classifies_case_insensitive() {
         assert_eq!(classify_token("ENG"), Some(Token::Language("en".into())));
-        assert_eq!(classify_token("ENGLISH"), Some(Token::Language("en".into())));
+        assert_eq!(
+            classify_token("ENGLISH"),
+            Some(Token::Language("en".into()))
+        );
     }
 
     #[test]

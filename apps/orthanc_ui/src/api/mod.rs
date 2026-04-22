@@ -1,6 +1,6 @@
 // API client for communicating with the orthanc_server REST API
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 pub const API_BASE_URL: &str = "http://localhost:8081";
 const API_BASE: &str = API_BASE_URL;
@@ -162,11 +162,18 @@ pub async fn get_library(token: &str, id: i64) -> Result<LibraryResponse, String
     get_json(&format!("/api/admin/libraries/{}", id), Some(token)).await
 }
 
-pub async fn create_library(token: &str, req: CreateLibraryRequest) -> Result<LibraryResponse, String> {
+pub async fn create_library(
+    token: &str,
+    req: CreateLibraryRequest,
+) -> Result<LibraryResponse, String> {
     post_json("/api/admin/libraries", &req, Some(token)).await
 }
 
-pub async fn update_library(token: &str, id: i64, req: UpdateLibraryRequest) -> Result<LibraryResponse, String> {
+pub async fn update_library(
+    token: &str,
+    id: i64,
+    req: UpdateLibraryRequest,
+) -> Result<LibraryResponse, String> {
     put_json(&format!("/api/admin/libraries/{}", id), &req, Some(token)).await
 }
 
@@ -174,17 +181,37 @@ pub async fn delete_library(token: &str, id: i64) -> Result<(), String> {
     delete_req(&format!("/api/admin/libraries/{}", id), Some(token)).await
 }
 
-pub async fn add_library_path(token: &str, id: i64, path: &str) -> Result<LibraryPathResponse, String> {
-    let req = AddLibraryPathRequest { path: path.to_string() };
-    post_json(&format!("/api/admin/libraries/{}/paths", id), &req, Some(token)).await
+pub async fn add_library_path(
+    token: &str,
+    id: i64,
+    path: &str,
+) -> Result<LibraryPathResponse, String> {
+    let req = AddLibraryPathRequest {
+        path: path.to_string(),
+    };
+    post_json(
+        &format!("/api/admin/libraries/{}/paths", id),
+        &req,
+        Some(token),
+    )
+    .await
 }
 
 pub async fn remove_library_path(token: &str, library_id: i64, path_id: i64) -> Result<(), String> {
-    delete_req(&format!("/api/admin/libraries/{}/paths/{}", library_id, path_id), Some(token)).await
+    delete_req(
+        &format!("/api/admin/libraries/{}/paths/{}", library_id, path_id),
+        Some(token),
+    )
+    .await
 }
 
 pub async fn scan_library(token: &str, id: i64) -> Result<ScanResult, String> {
-    post_json(&format!("/api/admin/libraries/{}/scan", id), &serde_json::json!({}), Some(token)).await
+    post_json(
+        &format!("/api/admin/libraries/{}/scan", id),
+        &serde_json::json!({}),
+        Some(token),
+    )
+    .await
 }
 
 pub async fn list_library_media(token: &str, id: i64) -> Result<Vec<MediaItemResponse>, String> {
@@ -254,14 +281,32 @@ pub async fn get_show(token: &str, id: i64) -> Result<MediaItemResponse, String>
     get_json(&format!("/api/media/shows/{}", id), Some(token)).await
 }
 
-pub async fn refresh_metadata(token: &str, id: i64, mode: &str) -> Result<serde_json::Value, String> {
+pub async fn refresh_metadata(
+    token: &str,
+    id: i64,
+    mode: &str,
+) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({"mode": mode});
-    post_json(&format!("/api/admin/metadata/refresh/{}", id), &body, Some(token)).await
+    post_json(
+        &format!("/api/admin/metadata/refresh/{}", id),
+        &body,
+        Some(token),
+    )
+    .await
 }
 
-pub async fn refresh_library_metadata(token: &str, id: i64, mode: &str) -> Result<serde_json::Value, String> {
+pub async fn refresh_library_metadata(
+    token: &str,
+    id: i64,
+    mode: &str,
+) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({"mode": mode});
-    post_json(&format!("/api/admin/metadata/refresh-library/{}", id), &body, Some(token)).await
+    post_json(
+        &format!("/api/admin/metadata/refresh-library/{}", id),
+        &body,
+        Some(token),
+    )
+    .await
 }
 
 #[derive(Debug, Serialize)]
@@ -274,8 +319,17 @@ pub struct MetadataOverride {
     pub release_date: Option<String>,
 }
 
-pub async fn override_metadata(token: &str, id: i64, req: MetadataOverride) -> Result<serde_json::Value, String> {
-    put_json(&format!("/api/admin/metadata/override/{}", id), &req, Some(token)).await
+pub async fn override_metadata(
+    token: &str,
+    id: i64,
+    req: MetadataOverride,
+) -> Result<serde_json::Value, String> {
+    put_json(
+        &format!("/api/admin/metadata/override/{}", id),
+        &req,
+        Some(token),
+    )
+    .await
 }
 
 // ── Metadata Providers ──
@@ -289,24 +343,51 @@ pub struct MetadataProviderResponse {
     pub priority: i32,
 }
 
-pub async fn list_providers(token: &str, library_id: i64) -> Result<Vec<MetadataProviderResponse>, String> {
-    get_json(&format!("/api/admin/libraries/{}/providers", library_id), Some(token)).await
+pub async fn list_providers(
+    token: &str,
+    library_id: i64,
+) -> Result<Vec<MetadataProviderResponse>, String> {
+    get_json(
+        &format!("/api/admin/libraries/{}/providers", library_id),
+        Some(token),
+    )
+    .await
 }
 
-pub async fn update_provider(token: &str, library_id: i64, provider: &str, is_enabled: bool) -> Result<serde_json::Value, String> {
+pub async fn update_provider(
+    token: &str,
+    library_id: i64,
+    provider: &str,
+    is_enabled: bool,
+) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({
         "provider": provider,
         "is_enabled": is_enabled,
     });
-    put_json(&format!("/api/admin/libraries/{}/providers", library_id), &body, Some(token)).await
+    put_json(
+        &format!("/api/admin/libraries/{}/providers", library_id),
+        &body,
+        Some(token),
+    )
+    .await
 }
 
-pub async fn swap_providers(token: &str, library_id: i64, provider_a: &str, provider_b: &str) -> Result<serde_json::Value, String> {
+pub async fn swap_providers(
+    token: &str,
+    library_id: i64,
+    provider_a: &str,
+    provider_b: &str,
+) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({
         "provider_a": provider_a,
         "provider_b": provider_b,
     });
-    post_json(&format!("/api/admin/libraries/{}/providers/swap", library_id), &body, Some(token)).await
+    post_json(
+        &format!("/api/admin/libraries/{}/providers/swap", library_id),
+        &body,
+        Some(token),
+    )
+    .await
 }
 
 pub async fn get_setup_status() -> Result<SetupStatus, String> {
@@ -372,14 +453,16 @@ pub async fn get_server_settings(token: &str) -> Result<Vec<Setting>, String> {
 }
 
 pub async fn update_server_setting(token: &str, key: &str, value: &str) -> Result<(), String> {
-    let req = UpdateSettingRequest { key: key.to_string(), value: value.to_string() };
+    let req = UpdateSettingRequest {
+        key: key.to_string(),
+        value: value.to_string(),
+    };
     let _ = put_json::<serde_json::Value>("/api/admin/settings", &req, Some(token)).await?;
     Ok(())
 }
 
 pub async fn change_password(token: &str, req: ChangePasswordRequest) -> Result<(), String> {
-    let _ =
-        put_json::<serde_json::Value>("/api/settings/password", &req, Some(token)).await?;
+    let _ = put_json::<serde_json::Value>("/api/settings/password", &req, Some(token)).await?;
     Ok(())
 }
 
@@ -532,7 +615,11 @@ pub struct TranscodeSeekResponse {
     pub actual_start_seconds: f64,
 }
 
-pub async fn transcode_seek(token: &str, session_id: &str, seek_time: f64) -> Result<TranscodeSeekResponse, String> {
+pub async fn transcode_seek(
+    token: &str,
+    session_id: &str,
+    seek_time: f64,
+) -> Result<TranscodeSeekResponse, String> {
     let body = serde_json::json!({"session_id": session_id, "seek_time": seek_time});
     post_json("/api/media/transcode-seek", &body, Some(token)).await
 }
@@ -540,7 +627,12 @@ pub async fn transcode_seek(token: &str, session_id: &str, seek_time: f64) -> Re
 pub async fn stop_transcode(token: &str, session_id: &str) -> Result<(), String> {
     let url = format!("{}/api/media/transcode/{}", API_BASE, session_id);
     let client = reqwest::Client::new();
-    let resp = client.delete(&url).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .delete(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -582,14 +674,28 @@ pub async fn list_active_streams(token: &str) -> Result<Vec<ActiveStreamRow>, St
 }
 
 pub async fn stop_active_stream(token: &str, session_id: &str) -> Result<(), String> {
-    delete_req(&format!("/api/admin/playback/sessions/{}", session_id), Some(token)).await
+    delete_req(
+        &format!("/api/admin/playback/sessions/{}", session_id),
+        Some(token),
+    )
+    .await
 }
 
-pub async fn update_progress(token: &str, media_id: i64, position_seconds: i32) -> Result<(), String> {
+pub async fn update_progress(
+    token: &str,
+    media_id: i64,
+    position_seconds: i32,
+) -> Result<(), String> {
     let body = serde_json::json!({"position_seconds": position_seconds});
     let url = format!("{}/api/media/{}/progress", API_BASE, media_id);
     let client = reqwest::Client::new();
-    let resp = client.put(&url).json(&body).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .put(&url)
+        .json(&body)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -620,7 +726,13 @@ pub async fn save_track_preferences(
     });
     let url = format!("{}/api/media/track-preferences", API_BASE);
     let client = reqwest::Client::new();
-    let resp = client.put(&url).json(&body).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .put(&url)
+        .json(&body)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {

@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use web_sys::wasm_bindgen::{self, JsCast};
 
 use crate::api;
-use crate::state::{self, with_refresh, AuthState};
+use crate::state::{self, AuthState, with_refresh};
 use crate::views::settings::{LS_DEFAULT_VOLUME, LS_SKIP_SECONDS};
 
 fn get_video() -> Option<web_sys::HtmlVideoElement> {
@@ -81,7 +81,8 @@ fn destroy_hls() {
 /// Inject the subtitle attach/detach bridge. Must be called once per player
 /// mount so the helper exists on `window`.
 fn install_subtitle_bridge() {
-    let _ = js_sys::eval(r#"
+    let _ = js_sys::eval(
+        r#"
         window._orthancAttachSubtitle = function(url, lang, label, isDefault) {
             var attempts = 0;
             var apply = function() {
@@ -133,7 +134,8 @@ fn install_subtitle_bridge() {
             };
             apply();
         };
-    "#);
+    "#,
+    );
 }
 
 /// Build the URL+label for a subtitle track, then ask the JS bridge to attach it.
@@ -299,7 +301,12 @@ pub fn Player(id: i64) -> Element {
     // this show (or movie). Scope resolution happens on the server.
     let save_preferences = move || {
         let audio_lang = selected_audio_stream_id()
-            .and_then(|sid| available_audio_tracks().iter().find(|t| t.id == sid).cloned())
+            .and_then(|sid| {
+                available_audio_tracks()
+                    .iter()
+                    .find(|t| t.id == sid)
+                    .cloned()
+            })
             .and_then(|t| t.language);
         let sub_id = selected_subtitle_id().or(burned_subtitle_id());
         let subs_enabled = sub_id.is_some();
@@ -355,10 +362,12 @@ pub fn Player(id: i64) -> Element {
         spawn(async move {
             // Get saved progress for resume
             let mut resume_time = 0.0_f64;
-            let progress_result = with_refresh(auth, |token| async move {
-                api::get_progress(&token, id).await
-            })
-            .await;
+            let progress_result =
+                with_refresh(
+                    auth,
+                    |token| async move { api::get_progress(&token, id).await },
+                )
+                .await;
 
             if let Ok(progress) = progress_result {
                 if !progress.is_completed && progress.position_seconds > 0 {
@@ -523,7 +532,9 @@ pub fn Player(id: i64) -> Element {
 
     // Shared seek-to-time logic for both slider and skip buttons
     let mut seek_to = move |t: f64| {
-        if seeking() { return; }
+        if seeking() {
+            return;
+        }
         current_time.set(t);
 
         if let Some(ref session_id) = transcode_session_id() {
@@ -541,9 +552,7 @@ pub fn Player(id: i64) -> Element {
                     let sid = session_id.clone();
                     move |token| {
                         let sid = sid.clone();
-                        async move {
-                            api::transcode_seek(&token, &sid, t).await
-                        }
+                        async move { api::transcode_seek(&token, &sid, t).await }
                     }
                 })
                 .await;
@@ -597,12 +606,21 @@ pub fn Player(id: i64) -> Element {
                                 .ok()
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            if done { break; }
-                            if js_sys::Date::now() - poll_start > 10_000.0 { break; }
-                            let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
-                                let _ = web_sys::window().unwrap()
-                                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100);
-                            });
+                            if done {
+                                break;
+                            }
+                            if js_sys::Date::now() - poll_start > 10_000.0 {
+                                break;
+                            }
+                            let promise = js_sys::Promise::new(
+                                &mut |resolve: js_sys::Function, _: js_sys::Function| {
+                                    let _ = web_sys::window()
+                                        .unwrap()
+                                        .set_timeout_with_callback_and_timeout_and_arguments_0(
+                                            &resolve, 100,
+                                        );
+                                },
+                            );
                             let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
                         }
 
@@ -642,7 +660,11 @@ pub fn Player(id: i64) -> Element {
                 seek_to(new_time);
             } else {
                 let dur = video.duration();
-                let new_time = (video.current_time() + skip_seconds).min(if dur.is_finite() { dur } else { f64::MAX });
+                let new_time = (video.current_time() + skip_seconds).min(if dur.is_finite() {
+                    dur
+                } else {
+                    f64::MAX
+                });
                 video.set_current_time(new_time);
                 current_time.set(new_time);
             }
@@ -651,7 +673,9 @@ pub fn Player(id: i64) -> Element {
 
     // Update visual position while dragging (no server call)
     let on_seek_input = move |evt: Event<FormData>| {
-        if seeking() { return; }
+        if seeking() {
+            return;
+        }
         if let Ok(t) = evt.value().parse::<f64>() {
             current_time.set(t);
             if transcode_session_id().is_none() {
@@ -715,10 +739,12 @@ pub fn Player(id: i64) -> Element {
     use_effect(move || {
         spawn(async move {
             loop {
-                let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
-                    let _ = web_sys::window().unwrap()
-                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
-                });
+                let promise =
+                    js_sys::Promise::new(&mut |resolve: js_sys::Function, _: js_sys::Function| {
+                        let _ = web_sys::window()
+                            .unwrap()
+                            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500);
+                    });
                 let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 
                 if subtitle_menu_open() || audio_menu_open() || !is_playing() {
@@ -905,10 +931,8 @@ pub fn Player(id: i64) -> Element {
                     let ac = ac.clone();
                     let ct = ct.clone();
                     async move {
-                        api::get_stream_token(
-                            &token, id, vc, ac, ct, t, None, audio_id, normalize,
-                        )
-                        .await
+                        api::get_stream_token(&token, id, vc, ac, ct, t, None, audio_id, normalize)
+                            .await
                     }
                 }
             })
@@ -1126,7 +1150,8 @@ pub fn Player(id: i64) -> Element {
     // Direct mode: JS seeks the video element directly.
     // HLS mode: JS simulates a click on the skip buttons to reuse the Dioxus seek flow.
     use_effect(move || {
-        let _ = js_sys::eval(r#"
+        let _ = js_sys::eval(
+            r#"
             (function() {
                 if (window._orthanc_keydown) {
                     window.removeEventListener('keydown', window._orthanc_keydown);
@@ -1159,7 +1184,8 @@ pub fn Player(id: i64) -> Element {
                 };
                 window.addEventListener('keydown', window._orthanc_keydown);
             })()
-        "#);
+        "#,
+        );
     });
 
     // Volume icon state

@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use crate::api::{self, MediaItemResponse};
 use crate::state::{AuthState, with_refresh};
+use dioxus::prelude::*;
 
 fn format_size(bytes: Option<i64>) -> String {
     match bytes {
@@ -26,11 +26,7 @@ pub fn Home() -> Element {
         .read()
         .user
         .as_ref()
-        .map(|u| {
-            u.display_name
-                .clone()
-                .unwrap_or_else(|| u.username.clone())
-        })
+        .map(|u| u.display_name.clone().unwrap_or_else(|| u.username.clone()))
         .unwrap_or_default();
 
     let mut movies = use_signal(Vec::<MediaItemResponse>::new);
@@ -39,9 +35,13 @@ pub fn Home() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            if let Ok(recent) = with_refresh(auth, |token| async move {
-                api::get_recent_media(&token).await
-            }).await {
+            if let Ok(recent) =
+                with_refresh(
+                    auth,
+                    |token| async move { api::get_recent_media(&token).await },
+                )
+                .await
+            {
                 movies.set(recent.movies);
                 shows.set(recent.shows);
             }
@@ -130,7 +130,10 @@ fn MediaCard(item: MediaItemResponse) -> Element {
     let is_show = item.media_type == "tv_show";
     let id = item.id;
     let has_poster = item.poster_url.is_some();
-    let poster_src = item.poster_url.clone().map(|p| format!("{}{}", crate::api::API_BASE_URL, p));
+    let poster_src = item
+        .poster_url
+        .clone()
+        .map(|p| format!("{}{}", crate::api::API_BASE_URL, p));
 
     let route = if is_show {
         crate::Route::ShowDetail { id }

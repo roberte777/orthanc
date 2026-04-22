@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::{
     Route,
     state::{AuthState, clear_auth, with_refresh},
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn AppShell() -> Element {
@@ -17,9 +17,12 @@ pub fn AppShell() -> Element {
 
         if has_token && !has_user {
             spawn(async move {
-                match with_refresh(auth, |token| async move {
-                    crate::api::get_me(&token).await
-                }).await {
+                match with_refresh(
+                    auth,
+                    |token| async move { crate::api::get_me(&token).await },
+                )
+                .await
+                {
                     Ok(user) => {
                         auth.write().user = Some(user);
                     }

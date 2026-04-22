@@ -12,9 +12,9 @@ use crate::{
     models::{session::SessionResponse, user::UserResponse},
 };
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::{delete, get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -266,8 +266,8 @@ async fn create_tokens(
     let refresh_token = generate_refresh_token();
     let token_hash = hash_token(&refresh_token);
 
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::seconds(state.refresh_token_expiry as i64);
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(state.refresh_token_expiry as i64);
 
     sqlx::query(
         "INSERT INTO user_sessions (user_id, refresh_token_hash, device_name, expires_at)

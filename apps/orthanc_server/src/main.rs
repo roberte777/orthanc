@@ -82,7 +82,11 @@ async fn main() -> anyhow::Result<()> {
             )
             .fetch_all(&db)
             .await
-            .map(|rows| rows.into_iter().map(|(id,)| id).collect::<std::collections::HashSet<_>>())
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|(id,)| id)
+                    .collect::<std::collections::HashSet<_>>()
+            })
             .unwrap_or_default();
             tokio::task::spawn_blocking(move || {
                 subtitles::cleanup::full_sweep(&subtitle_dir, &live_ids, max_bytes);
@@ -112,8 +116,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors);
 
-    let bind_addr =
-        std::env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let bind_addr = std::env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     info!("Listening on {}", bind_addr);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 

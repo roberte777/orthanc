@@ -1,9 +1,9 @@
-use dioxus::prelude::*;
 use crate::{
+    Route,
     api::{self, LoginRequest},
     state::{AuthState, save_auth},
-    Route,
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn Login() -> Element {

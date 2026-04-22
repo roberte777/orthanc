@@ -12,16 +12,12 @@ pub struct UserPreference {
     pub updated_at: String,
 }
 
-pub async fn load_preference(
-    pool: &SqlitePool,
-    user_id: i64,
-) -> Result<Option<UserPreference>> {
-    let pref = sqlx::query_as::<_, UserPreference>(
-        "SELECT * FROM user_preferences WHERE user_id = ?",
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
+pub async fn load_preference(pool: &SqlitePool, user_id: i64) -> Result<Option<UserPreference>> {
+    let pref =
+        sqlx::query_as::<_, UserPreference>("SELECT * FROM user_preferences WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(pref)
 }
 
