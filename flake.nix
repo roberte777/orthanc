@@ -20,6 +20,7 @@
         toolchain = fenix.packages.${system}.combine [
           fenix.packages.${system}.stable.toolchain
           fenix.packages.${system}.targets.wasm32-unknown-unknown.stable.rust-std
+          fenix.packages.${system}.rust-analyzer
         ];
 
         # Build wasm-bindgen-cli with the correct version (0.2.118)
