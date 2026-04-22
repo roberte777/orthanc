@@ -1,6 +1,6 @@
  [workspace]
  resolver = "2"
- members = ["apps/orthanc_server",
+ members = ["apps/lightweaver_server","apps/orthanc_server",
  "apps/orthanc_ui"
 ]
 
