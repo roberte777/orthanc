@@ -93,10 +93,8 @@ async fn recent_media(
     let mut movies: Vec<MediaItemResponse> = movies_raw.into_iter().map(Into::into).collect();
     let mut shows: Vec<MediaItemResponse> = shows_raw.into_iter().map(Into::into).collect();
 
-    enrich_list(&state.db, &mut movies)
-        .await?;
-    enrich_list(&state.db, &mut shows)
-        .await?;
+    enrich_list(&state.db, &mut movies).await?;
+    enrich_list(&state.db, &mut shows).await?;
 
     Ok(Json(RecentMedia { movies, shows }))
 }
@@ -113,8 +111,7 @@ async fn list_movies(
     .map_err(anyhow::Error::from)?;
 
     let mut items: Vec<MediaItemResponse> = raw.into_iter().map(Into::into).collect();
-    enrich_list(&state.db, &mut items)
-        .await?;
+    enrich_list(&state.db, &mut items).await?;
 
     Ok(Json(items))
 }
@@ -131,8 +128,7 @@ async fn list_shows(
     .map_err(anyhow::Error::from)?;
 
     let mut items: Vec<MediaItemResponse> = raw.into_iter().map(Into::into).collect();
-    enrich_list(&state.db, &mut items)
-        .await?;
+    enrich_list(&state.db, &mut items).await?;
 
     Ok(Json(items))
 }
@@ -152,8 +148,7 @@ async fn get_movie(
     .ok_or(ApiError::NotFound("Movie not found".to_string()))?;
 
     let mut resp: MediaItemResponse = movie.into();
-    enrich(&state.db, &mut resp)
-        .await?;
+    enrich(&state.db, &mut resp).await?;
 
     Ok(Json(resp))
 }
@@ -173,8 +168,7 @@ async fn get_show(
     .ok_or(ApiError::NotFound("Show not found".to_string()))?;
 
     let mut resp: MediaItemResponse = show.into();
-    enrich(&state.db, &mut resp)
-        .await?;
+    enrich(&state.db, &mut resp).await?;
 
     // Load seasons with episodes
     let seasons = sqlx::query_as::<_, MediaItem>(
@@ -188,8 +182,7 @@ async fn get_show(
     let mut season_resps = Vec::new();
     for season in seasons {
         let mut season_resp: MediaItemResponse = season.clone().into();
-        enrich(&state.db, &mut season_resp)
-            .await?;
+        enrich(&state.db, &mut season_resp).await?;
 
         let episodes = sqlx::query_as::<_, MediaItem>(
             "SELECT * FROM media_items WHERE parent_id = ? AND media_type = 'episode' ORDER BY episode_number",
@@ -200,8 +193,7 @@ async fn get_show(
         .map_err(anyhow::Error::from)?;
 
         let mut ep_resps: Vec<MediaItemResponse> = episodes.into_iter().map(Into::into).collect();
-        enrich_list(&state.db, &mut ep_resps)
-            .await?;
+        enrich_list(&state.db, &mut ep_resps).await?;
         season_resp.children = Some(ep_resps);
         season_resps.push(season_resp);
     }

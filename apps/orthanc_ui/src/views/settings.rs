@@ -1,6 +1,6 @@
 use crate::{
     api::{self, ChangePasswordRequest, UpdateProfileRequest, UserPreferences},
-    state::{self, AuthState, with_refresh},
+    state::{AuthState, Storage, with_refresh},
 };
 use dioxus::prelude::*;
 
@@ -236,6 +236,7 @@ fn PasswordSection() -> Element {
 #[component]
 fn PlaybackSection() -> Element {
     let auth = use_context::<Signal<AuthState>>();
+    let storage = use_context::<Storage>();
 
     // Server-synced language defaults
     let mut audio_lang = use_signal(String::new);
@@ -244,14 +245,16 @@ fn PlaybackSection() -> Element {
     let mut normalize_on = use_signal(|| false);
     let mut loaded = use_signal(|| false);
 
-    // Client-only (localStorage) player UX
+    // Client-only player UX prefs (persisted via the Storage trait)
     let mut volume = use_signal(|| {
-        state::storage_get(LS_DEFAULT_VOLUME)
+        storage
+            .get(LS_DEFAULT_VOLUME)
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(1.0)
     });
     let mut skip_seconds = use_signal(|| {
-        state::storage_get(LS_SKIP_SECONDS)
+        storage
+            .get(LS_SKIP_SECONDS)
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(10)
     });
@@ -280,9 +283,9 @@ fn PlaybackSection() -> Element {
         saving.set(true);
         message.set(None);
 
-        // Save localStorage first (fire-and-forget — no network)
-        state::storage_set(LS_DEFAULT_VOLUME, &format!("{}", volume()));
-        state::storage_set(LS_SKIP_SECONDS, &format!("{}", skip_seconds()));
+        // Persist client-only prefs first (fire-and-forget, no network)
+        storage.set(LS_DEFAULT_VOLUME, &format!("{}", volume()));
+        storage.set(LS_SKIP_SECONDS, &format!("{}", skip_seconds()));
 
         let prefs = UserPreferences {
             preferred_audio_language: {

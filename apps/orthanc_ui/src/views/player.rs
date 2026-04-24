@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use web_sys::wasm_bindgen::JsCast;
 
 use crate::api;
-use crate::state::{self, AuthState, with_refresh};
+use crate::state::{AuthState, Storage, with_refresh};
 use crate::views::settings::{LS_DEFAULT_VOLUME, LS_SKIP_SECONDS};
 
 fn get_video() -> Option<web_sys::HtmlVideoElement> {
@@ -55,17 +55,18 @@ fn probe_client_capabilities() -> (Vec<String>, Vec<String>, Vec<String>) {
 
     let result = js_sys::eval(js);
     if let Ok(val) = result
-        && let Some(s) = val.as_string() {
-            #[derive(serde::Deserialize)]
-            struct Caps {
-                v: Vec<String>,
-                a: Vec<String>,
-                c: Vec<String>,
-            }
-            if let Ok(caps) = serde_json::from_str::<Caps>(&s) {
-                return (caps.v, caps.a, caps.c);
-            }
+        && let Some(s) = val.as_string()
+    {
+        #[derive(serde::Deserialize)]
+        struct Caps {
+            v: Vec<String>,
+            a: Vec<String>,
+            c: Vec<String>,
         }
+        if let Ok(caps) = serde_json::from_str::<Caps>(&s) {
+            return (caps.v, caps.a, caps.c);
+        }
+    }
     // Fallback: empty = server uses defaults
     (vec![], vec![], vec![])
 }
@@ -201,9 +202,10 @@ fn audio_label(t: &api::AudioTrack) -> String {
         chips.push(pretty);
     }
     if let Some(title) = &t.title
-        && t.language.as_ref().map(|l| l != title).unwrap_or(true) {
-            chips.push(title.clone());
-        }
+        && t.language.as_ref().map(|l| l != title).unwrap_or(true)
+    {
+        chips.push(title.clone());
+    }
     if t.is_default {
         chips.push("Default".to_string());
     }
@@ -217,6 +219,7 @@ fn audio_label(t: &api::AudioTrack) -> String {
 #[component]
 pub fn Player(id: i64) -> Element {
     let auth = use_context::<Signal<AuthState>>();
+    let storage = use_context::<Storage>();
     let mut stream_url = use_signal(|| None::<String>);
     let mut stream_mode = use_signal(String::new);
     let mut error_msg = use_signal(|| None::<String>);
@@ -235,12 +238,14 @@ pub fn Player(id: i64) -> Element {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     });
-    let initial_volume = state::storage_get(LS_DEFAULT_VOLUME)
+    let initial_volume = storage
+        .get(LS_DEFAULT_VOLUME)
         .and_then(|v| v.parse::<f64>().ok())
         .map(|v| v.clamp(0.0, 1.0))
         .unwrap_or(1.0);
     let mut volume = use_signal(|| initial_volume);
-    let skip_seconds = state::storage_get(LS_SKIP_SECONDS)
+    let skip_seconds = storage
+        .get(LS_SKIP_SECONDS)
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|&s| s > 0.0)
         .unwrap_or(10.0);
@@ -368,9 +373,11 @@ pub fn Player(id: i64) -> Element {
                 .await;
 
             if let Ok(progress) = progress_result
-                && !progress.is_completed && progress.position_seconds > 0 {
-                    resume_time = progress.position_seconds as f64;
-                }
+                && !progress.is_completed
+                && progress.position_seconds > 0
+            {
+                resume_time = progress.position_seconds as f64;
+            }
 
             // Probe client codec support
             let (video_codecs, audio_codecs, containers) = probe_client_capabilities();
@@ -404,7 +411,7 @@ pub fn Player(id: i64) -> Element {
 
             match token_result {
                 Ok(resp) => {
-                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    let url = format!("{}{}", api::base_url(), resp.stream_url);
                     let mode = resp.mode.clone();
                     stream_mode.set(mode.clone());
                     stream_url.set(Some(url.clone()));
@@ -412,9 +419,10 @@ pub fn Player(id: i64) -> Element {
                     transcode_session_id.set(resp.transcode_session_id.clone());
                     stream_token.set(resp.token.clone());
                     if let Some(dur) = resp.duration_seconds
-                        && dur > 0 {
-                            duration.set(dur as f64);
-                        }
+                        && dur > 0
+                    {
+                        duration.set(dur as f64);
+                    }
 
                     // Seed subtitle state
                     available_subtitles.set(resp.subtitles.clone());
@@ -675,9 +683,10 @@ pub fn Player(id: i64) -> Element {
         if let Ok(t) = evt.value().parse::<f64>() {
             current_time.set(t);
             if transcode_session_id().is_none()
-                && let Some(video) = get_video() {
-                    video.set_current_time(t);
-                }
+                && let Some(video) = get_video()
+            {
+                video.set_current_time(t);
+            }
         }
     };
 
@@ -694,10 +703,11 @@ pub fn Player(id: i64) -> Element {
 
     let on_volume = move |evt: Event<FormData>| {
         if let Some(video) = get_video()
-            && let Ok(v) = evt.value().parse::<f64>() {
-                video.set_volume(v);
-                volume.set(v);
-            }
+            && let Ok(v) = evt.value().parse::<f64>()
+        {
+            video.set_volume(v);
+            volume.set(v);
+        }
     };
 
     let on_mouse_move = move |_: MouseEvent| {
@@ -758,14 +768,15 @@ pub fn Player(id: i64) -> Element {
 
     let toggle_fullscreen = move |_| {
         if let Some(window) = web_sys::window()
-            && let Some(document) = window.document() {
-                // If already fullscreen, exit; otherwise enter
-                if document.fullscreen_element().is_some() {
-                    document.exit_fullscreen();
-                } else if let Some(el) = document.get_element_by_id("player-container") {
-                    let _ = el.request_fullscreen();
-                }
+            && let Some(document) = window.document()
+        {
+            // If already fullscreen, exit; otherwise enter
+            if document.fullscreen_element().is_some() {
+                document.exit_fullscreen();
+            } else if let Some(el) = document.get_element_by_id("player-container") {
+                let _ = el.request_fullscreen();
             }
+        }
     };
 
     // Select a subtitle track (by id). None = off.
@@ -837,7 +848,7 @@ pub fn Player(id: i64) -> Element {
 
             match resp_result {
                 Ok(resp) => {
-                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    let url = format!("{}{}", api::base_url(), resp.stream_url);
                     stream_mode.set(resp.mode.clone());
                     stream_url.set(Some(url.clone()));
                     transcode_session_id.set(resp.transcode_session_id.clone());
@@ -931,7 +942,7 @@ pub fn Player(id: i64) -> Element {
             })
             .await;
             if let Ok(resp) = resp_result {
-                let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                let url = format!("{}{}", api::base_url(), resp.stream_url);
                 stream_mode.set(resp.mode.clone());
                 stream_url.set(Some(url.clone()));
                 transcode_session_id.set(resp.transcode_session_id.clone());
@@ -1031,7 +1042,7 @@ pub fn Player(id: i64) -> Element {
             .await;
             match resp_result {
                 Ok(resp) => {
-                    let url = format!("{}{}", api::API_BASE_URL, resp.stream_url);
+                    let url = format!("{}{}", api::base_url(), resp.stream_url);
                     stream_mode.set(resp.mode.clone());
                     stream_url.set(Some(url.clone()));
                     transcode_session_id.set(resp.transcode_session_id.clone());

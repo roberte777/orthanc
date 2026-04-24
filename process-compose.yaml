@@ -1,0 +1,21 @@
+version: "0.5"
+
+processes:
+  orthanc_server:
+    command: cargo run -p orthanc_server
+    working_dir: .
+    environment:
+      - "RUST_LOG=orthanc_server=debug,info"
+    availability:
+      restart: on_failure
+      max_restarts: 3
+
+  orthanc_ui:
+    command: dx serve --platform web
+    working_dir: ./apps/orthanc_ui
+    depends_on:
+      orthanc_server:
+        condition: process_started
+    availability:
+      restart: on_failure
+      max_restarts: 3

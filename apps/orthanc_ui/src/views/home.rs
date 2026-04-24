@@ -1,23 +1,7 @@
 use crate::api::{self, MediaItemResponse};
 use crate::state::{AuthState, with_refresh};
 use dioxus::prelude::*;
-
-fn format_size(bytes: Option<i64>) -> String {
-    match bytes {
-        Some(b) if b >= 1_073_741_824 => format!("{:.1} GB", b as f64 / 1_073_741_824.0),
-        Some(b) if b >= 1_048_576 => format!("{:.0} MB", b as f64 / 1_048_576.0),
-        Some(b) => format!("{} KB", b / 1024),
-        None => String::new(),
-    }
-}
-
-fn format_year(release_date: &Option<String>) -> String {
-    release_date
-        .as_ref()
-        .and_then(|d| d.get(..4))
-        .unwrap_or("")
-        .to_string()
-}
+use orthanc_core::formatters::format_year;
 
 #[component]
 pub fn Home() -> Element {
@@ -133,7 +117,7 @@ fn MediaCard(item: MediaItemResponse) -> Element {
     let poster_src = item
         .poster_url
         .clone()
-        .map(|p| format!("{}{}", crate::api::API_BASE_URL, p));
+        .map(|p| format!("{}{}", crate::api::base_url(), p));
 
     let route = if is_show {
         crate::Route::ShowDetail { id }

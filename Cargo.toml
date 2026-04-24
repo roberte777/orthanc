@@ -1,7 +1,11 @@
- [workspace]
- resolver = "2"
- members = ["apps/lightweaver_server","apps/orthanc_server",
- "apps/orthanc_ui"
+[workspace]
+resolver = "2"
+members = [
+    "apps/lightweaver_server",
+    "apps/orthanc_server",
+    "apps/orthanc_ui",
+    "apps/orthanc_ui_mobile",
+    "crates/orthanc_core",
 ]
 
 [workspace.package]
@@ -40,6 +44,9 @@ getrandom = "0.4.2"
 # Dioxus
 dioxus = "0.7"
 
+# Internal crates
+orthanc_core = { path = "crates/orthanc_core" }
+
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
@@ -55,6 +62,7 @@ flate2 = "1"
 # Async utilities
 tokio-util = { version = "0.7", features = ["io"] }
 futures-core = "0.3"
+async-trait = "0.1"
 
 # Web APIs
 web-sys = { version = "0.3", features = ["Window", "Storage", "HtmlVideoElement", "HtmlMediaElement", "Document", "HtmlElement", "Element", "Event", "TimeRanges", "KeyboardEvent", "EventTarget"] }

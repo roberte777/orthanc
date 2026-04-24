@@ -1,0 +1,27 @@
+[package]
+name = "orthanc_ui_mobile"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+dioxus = { version = "0.7.5", features = ["router"] }
+orthanc_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+# iOS Keychain via Security.framework. macOS uses the same backend so the dev
+# desktop build also gets real keychain semantics. Android falls back to the
+# file-based shim in src/storage.rs (see comments there).
+keyring = { version = "3", features = ["apple-native"] }
+# Used by the file-based storage fallback to find the app's per-user data dir.
+dirs = "5"
+
+[features]
+default = ["mobile"]
+mobile = ["dioxus/mobile"]
+# `desktop` is a deliberate dev-loop feature: it lets us run the mobile UI in a
+# desktop window via `dx serve --platform desktop`, which is much faster to
+# iterate on than rebuilding for iOS each time.
+desktop = ["dioxus/desktop"]

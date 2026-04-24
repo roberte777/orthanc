@@ -1,10 +1,15 @@
 use dioxus::prelude::*;
+use orthanc_core::storage::Storage;
 use state::AuthState;
+use std::sync::Arc;
 
 mod api;
 mod components;
 mod state;
+mod storage;
 mod views;
+
+use storage::WebStorage;
 
 use views::{
     admin_libraries::AdminLibraries,
@@ -57,11 +62,15 @@ const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
 
 fn main() {
+    // Web build talks to its own origin via a dev-time hardcoded URL. The
+    // mobile crate captures this from a server-config screen at runtime.
+    orthanc_core::api::set_base_url("http://localhost:8081".to_string());
     dioxus::launch(App);
 }
 
 #[component]
 fn App() -> Element {
+    use_context_provider::<Storage>(|| Arc::new(WebStorage));
     use_context_provider(|| Signal::new(AuthState::default()));
 
     rsx! {

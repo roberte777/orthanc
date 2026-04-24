@@ -658,11 +658,12 @@ impl TranscodeSessionManager {
                     return;
                 }
                 if let Ok(content) = tokio::fs::read_to_string(output_dir.join("stream.m3u8")).await
-                    && content.contains(".ts") {
-                        let _ = session.ready_tx.send(true);
-                        debug!("First HLS segment ready for session {}", session.session_id);
-                        return;
-                    }
+                    && content.contains(".ts")
+                {
+                    let _ = session.ready_tx.send(true);
+                    debug!("First HLS segment ready for session {}", session.session_id);
+                    return;
+                }
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         });

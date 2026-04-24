@@ -1,0 +1,42 @@
+[application]
+name = "orthanc"
+default_platform = "ios"
+
+[bundle]
+identifier = "com.orthanc.client"
+
+# iOS-specific configuration. The plist values here are merged into the
+# generated Info.plist by dx. NSAllowsLocalNetworking is the App Store-friendly
+# way to permit cleartext HTTP to LAN servers (192.168.*, 10.*, .local) — much
+# narrower scope than the blanket NSAllowsArbitraryLoads. Required because
+# self-hosted Orthanc users will commonly hit http://192.168.x.x:8081 without
+# TLS.
+[ios]
+identifier = "com.orthanc.client"
+deployment_target = "15.0"
+
+[ios.plist]
+NSAppTransportSecurity = { NSAllowsLocalNetworking = true }
+UIRequiresFullScreen = false
+UISupportedInterfaceOrientations = [
+    "UIInterfaceOrientationPortrait",
+    "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight",
+]
+# Same set on iPad
+"UISupportedInterfaceOrientations~ipad" = [
+    "UIInterfaceOrientationPortrait",
+    "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight",
+]
+
+[android]
+identifier = "com.orthanc.client"
+
+# Android 9+ blocks cleartext HTTP by default. Self-hosted users connect to
+# their LAN over HTTP, so we explicitly opt in.
+[android.application]
+uses_cleartext_traffic = true
+
+[web.app]
+title = "Orthanc"

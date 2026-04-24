@@ -1,33 +1,7 @@
 use crate::api::{self, MediaItemResponse};
 use crate::state::{AuthState, with_refresh};
 use dioxus::prelude::*;
-
-fn format_size(bytes: Option<i64>) -> String {
-    match bytes {
-        Some(b) if b >= 1_073_741_824 => format!("{:.1} GB", b as f64 / 1_073_741_824.0),
-        Some(b) if b >= 1_048_576 => format!("{:.0} MB", b as f64 / 1_048_576.0),
-        Some(b) => format!("{} KB", b / 1024),
-        None => String::new(),
-    }
-}
-
-fn format_year(release_date: &Option<String>) -> String {
-    release_date
-        .as_ref()
-        .and_then(|d| d.get(..4))
-        .unwrap_or("")
-        .to_string()
-}
-
-fn format_runtime(seconds: Option<i32>) -> String {
-    match seconds {
-        Some(s) if s > 0 => {
-            let m = s / 60;
-            format!("{}m", m)
-        }
-        _ => String::new(),
-    }
-}
+use orthanc_core::formatters::{format_runtime, format_year};
 
 fn count_episodes(show: &MediaItemResponse) -> usize {
     show.children
@@ -41,8 +15,8 @@ fn count_episodes(show: &MediaItemResponse) -> usize {
         .unwrap_or(0)
 }
 
-fn api_base() -> String {
-    crate::api::API_BASE_URL.to_string()
+fn api_base() -> &'static str {
+    crate::api::base_url()
 }
 
 #[component]

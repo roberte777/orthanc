@@ -228,9 +228,10 @@ impl TvdbClient {
     async fn get_token(&self) -> Result<String, anyhow::Error> {
         let mut guard = self.token.lock().await;
         if let Some(ref t) = *guard
-            && t.issued.elapsed() < TOKEN_REFRESH_AFTER {
-                return Ok(t.jwt.clone());
-            }
+            && t.issued.elapsed() < TOKEN_REFRESH_AFTER
+        {
+            return Ok(t.jwt.clone());
+        }
 
         self.rate_limit().await;
         let url = format!("{}/login", BASE_URL);

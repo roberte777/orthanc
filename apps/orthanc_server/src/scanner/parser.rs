@@ -88,9 +88,10 @@ pub fn parse_media_file(file_info: &FileInfo, library_type: &str) -> ParsedMedia
         .unwrap_or("");
 
     if (library_type == "tv_shows" || RE_TV_GENERIC.is_match(filename))
-        && let Some(ep) = parse_episode(filename, parent_name, grandparent_name) {
-            return ep;
-        }
+        && let Some(ep) = parse_episode(filename, parent_name, grandparent_name)
+    {
+        return ep;
+    }
 
     if library_type == "movies" || !RE_TV_GENERIC.is_match(filename) {
         return parse_movie(filename, parent_name);

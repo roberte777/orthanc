@@ -97,11 +97,12 @@ pub async fn init_pool(config: &DbConfig) -> Result<DbPool> {
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = Path::new(&db_path).parent()
-        && !parent.exists() {
-            info!("Creating database directory: {}", parent.display());
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-        }
+        && !parent.exists()
+    {
+        info!("Creating database directory: {}", parent.display());
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
 
     // Configure SQLite connection options
     let mut connect_options = SqliteConnectOptions::from_str(&config.database_url)?

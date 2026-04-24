@@ -1,12 +1,13 @@
 use crate::{
     Route,
-    state::{AuthState, clear_auth, with_refresh},
+    state::{AuthState, Storage, clear_auth, with_refresh},
 };
 use dioxus::prelude::*;
 
 #[component]
 pub fn AppShell() -> Element {
     let mut auth = use_context::<Signal<AuthState>>();
+    let storage = use_context::<Storage>();
     let nav = use_navigator();
     let mut checked = use_signal(|| false);
 
@@ -113,10 +114,11 @@ pub fn AppShell() -> Element {
                                         .access_token
                                         .clone()
                                         .unwrap_or_default();
+                                    let storage = storage.clone();
                                     spawn(async move {
                                         let _ = crate::api::logout(&access_token, &refresh_token)
                                             .await;
-                                        clear_auth();
+                                        clear_auth(&storage);
                                         auth.write().access_token = None;
                                         auth.write().refresh_token = None;
                                         auth.write().user = None;

@@ -1,13 +1,14 @@
 use crate::{
     Route,
     api::{self, LoginRequest},
-    state::{AuthState, save_auth},
+    state::{AuthState, Storage, save_auth},
 };
 use dioxus::prelude::*;
 
 #[component]
 pub fn Login() -> Element {
     let mut auth = use_context::<Signal<AuthState>>();
+    let storage = use_context::<Storage>();
     let nav = use_navigator();
 
     // If already logged in, redirect
@@ -47,6 +48,7 @@ pub fn Login() -> Element {
 
         let uname = username();
         let pass = password();
+        let storage = storage.clone();
         spawn(async move {
             match api::login(LoginRequest {
                 username: uname,
@@ -55,7 +57,7 @@ pub fn Login() -> Element {
             .await
             {
                 Ok(resp) => {
-                    save_auth(&resp.access_token, &resp.refresh_token);
+                    save_auth(&storage, &resp.access_token, &resp.refresh_token);
                     auth.write().access_token = Some(resp.access_token);
                     auth.write().refresh_token = Some(resp.refresh_token);
                     auth.write().user = Some(resp.user);

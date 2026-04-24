@@ -1,13 +1,14 @@
 use crate::{
     Route,
     api::{self, SetupRequest},
-    state::{AuthState, save_auth},
+    state::{AuthState, Storage, save_auth},
 };
 use dioxus::prelude::*;
 
 #[component]
 pub fn Setup() -> Element {
     let mut auth = use_context::<Signal<AuthState>>();
+    let storage = use_context::<Storage>();
     let nav = use_navigator();
 
     let mut username = use_signal(String::new);
@@ -40,6 +41,7 @@ pub fn Setup() -> Element {
         error.set(None);
 
         let dn = display_name();
+        let storage = storage.clone();
         spawn(async move {
             let req = SetupRequest {
                 username: username(),
@@ -50,7 +52,7 @@ pub fn Setup() -> Element {
 
             match api::setup(req).await {
                 Ok(resp) => {
-                    save_auth(&resp.access_token, &resp.refresh_token);
+                    save_auth(&storage, &resp.access_token, &resp.refresh_token);
                     auth.write().access_token = Some(resp.access_token);
                     auth.write().refresh_token = Some(resp.refresh_token);
                     auth.write().user = Some(resp.user);
