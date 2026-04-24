@@ -1,11 +1,3 @@
--- Initial schema for Orthanc media server
--- Consolidated schema for movies and TV shows streaming, user authentication,
--- playback tracking, metadata providers, and user preferences.
-
--- ============================================================================
--- Users & Authentication
--- ============================================================================
-
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
@@ -26,8 +18,6 @@ CREATE TRIGGER trg_users_updated_at
     AFTER UPDATE ON users FOR EACH ROW
     BEGIN UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
 
--- User sessions for JWT refresh token management.
--- Access tokens are stateless JWTs; refresh tokens are tracked for device management and revocation.
 CREATE TABLE IF NOT EXISTS user_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -62,17 +52,12 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
 CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
 
--- ============================================================================
--- Media Libraries
--- ============================================================================
-
 CREATE TABLE IF NOT EXISTS libraries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     library_type TEXT NOT NULL CHECK(library_type IN ('movies', 'tv_shows')),
     description TEXT,
     is_enabled BOOLEAN NOT NULL DEFAULT 1,
-    scan_interval_minutes INTEGER,
     last_scan_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -82,7 +67,6 @@ CREATE TRIGGER trg_libraries_updated_at
     AFTER UPDATE ON libraries FOR EACH ROW
     BEGIN UPDATE libraries SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
 
--- Admins bypass this; non-admin users can only see libraries they have a row in this table for.
 CREATE TABLE IF NOT EXISTS library_users (
     library_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -103,8 +87,6 @@ CREATE TABLE IF NOT EXISTS library_paths (
 
 CREATE INDEX idx_library_paths_library_id ON library_paths(library_id);
 
--- Per-library metadata provider configuration. Providers are applied in priority order
--- (lower number = higher priority) when enriching a media item.
 CREATE TABLE IF NOT EXISTS library_metadata_providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     library_id INTEGER NOT NULL,
@@ -119,13 +101,6 @@ CREATE TABLE IF NOT EXISTS library_metadata_providers (
 
 CREATE INDEX idx_library_metadata_providers_library ON library_metadata_providers(library_id);
 
--- ============================================================================
--- Media Items
--- ============================================================================
-
--- Single-table hierarchy: TV show -> season -> episode via parent_id.
--- library_id is required for top-level items (movies, tv_shows) and NULL for
--- child items (seasons, episodes) which inherit the library from their parent.
 CREATE TABLE IF NOT EXISTS media_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     library_id INTEGER,
@@ -146,6 +121,7 @@ CREATE TABLE IF NOT EXISTS media_items (
     tagline TEXT,
 
     imdb_id TEXT,
+    anidb_id TEXT,
     tmdb_id TEXT,
     tvdb_id TEXT,
 
@@ -173,6 +149,8 @@ CREATE INDEX idx_media_items_parent_id ON media_items(parent_id);
 CREATE INDEX idx_media_items_file_path ON media_items(file_path);
 CREATE INDEX idx_media_items_imdb_id ON media_items(imdb_id);
 CREATE INDEX idx_media_items_tmdb_id ON media_items(tmdb_id);
+CREATE INDEX idx_media_items_tmdb_id ON media_items(tvdb_id);
+CREATE INDEX idx_media_items_tmdb_id ON media_items(anidb_id);
 CREATE INDEX idx_media_items_sort_title ON media_items(sort_title);
 CREATE INDEX idx_media_items_release_date ON media_items(release_date);
 CREATE INDEX idx_media_items_date_added ON media_items(date_added);
@@ -218,10 +196,6 @@ CREATE TABLE IF NOT EXISTS media_streams (
 
 CREATE INDEX idx_media_streams_media_item_id ON media_streams(media_item_id);
 CREATE INDEX idx_media_streams_type ON media_streams(stream_type);
-
--- ============================================================================
--- Metadata (Genres, People, Credits, Images)
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS genres (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,12 +268,6 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE INDEX idx_images_media_item_id ON images(media_item_id);
 CREATE INDEX idx_images_person_id ON images(person_id);
 
--- ============================================================================
--- Playback & Watch History
--- ============================================================================
-
--- Canonical resume point per user+media_item (one row per pair).
--- Drives "continue watching" and "mark as watched".
 CREATE TABLE IF NOT EXISTS user_media_progress (
     user_id INTEGER NOT NULL,
     media_item_id INTEGER NOT NULL,
@@ -315,7 +283,6 @@ CREATE TABLE IF NOT EXISTS user_media_progress (
 CREATE INDEX idx_user_media_progress_user_updated
     ON user_media_progress(user_id, last_updated_at);
 
--- Full history log of every viewing session.
 CREATE TABLE IF NOT EXISTS playback_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -334,13 +301,6 @@ CREATE TABLE IF NOT EXISTS playback_sessions (
 CREATE INDEX idx_playback_sessions_user_id ON playback_sessions(user_id);
 CREATE INDEX idx_playback_sessions_media_item_id ON playback_sessions(media_item_id);
 
--- ============================================================================
--- User Playback Preferences
--- ============================================================================
-
--- Per-user audio & subtitle preferences, scoped to a show (for TV) or a movie.
--- Language codes (not stream_ids) are persisted because stream_ids are per-file
--- and differ across episodes. The server resolves language -> stream at playback.
 CREATE TABLE IF NOT EXISTS user_track_preferences (
     user_id INTEGER NOT NULL,
     scope_media_item_id INTEGER NOT NULL,
@@ -363,8 +323,6 @@ CREATE TRIGGER trg_user_track_preferences_updated_at
         WHERE user_id = OLD.user_id AND scope_media_item_id = OLD.scope_media_item_id;
     END;
 
--- Global per-user playback defaults. Applies when no per-media
--- user_track_preferences row exists for a given show/movie.
 CREATE TABLE IF NOT EXISTS user_preferences (
     user_id INTEGER PRIMARY KEY,
     preferred_audio_language TEXT,
@@ -381,10 +339,6 @@ CREATE TRIGGER trg_user_preferences_updated_at
         UPDATE user_preferences SET updated_at = CURRENT_TIMESTAMP
         WHERE user_id = OLD.user_id;
     END;
-
--- ============================================================================
--- Transcoding
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS transcoding_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -411,10 +365,6 @@ CREATE TABLE IF NOT EXISTS transcoding_profiles (
 CREATE TRIGGER trg_transcoding_profiles_updated_at
     AFTER UPDATE ON transcoding_profiles FOR EACH ROW
     BEGIN UPDATE transcoding_profiles SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
-
--- ============================================================================
--- Collections
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,10 +394,6 @@ CREATE TABLE IF NOT EXISTS collection_items (
     FOREIGN KEY (media_item_id) REFERENCES media_items(id) ON DELETE CASCADE
 );
 
--- ============================================================================
--- System
--- ============================================================================
-
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -461,7 +407,6 @@ CREATE TRIGGER trg_settings_updated_at
     AFTER UPDATE ON settings FOR EACH ROW
     BEGIN UPDATE settings SET updated_at = CURRENT_TIMESTAMP WHERE key = OLD.key; END;
 
--- Background tasks/jobs (library scanning, transcoding, etc.)
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_type TEXT NOT NULL CHECK(task_type IN ('library_scan', 'metadata_refresh', 'transcode', 'thumbnail_generation', 'cleanup')),
