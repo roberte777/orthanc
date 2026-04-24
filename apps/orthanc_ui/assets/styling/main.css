@@ -1840,6 +1840,12 @@ a {
   gap: 0.15rem;
 }
 
+.player-inline-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
 .player-controls-center {
   position: absolute;
   left: 50%;
